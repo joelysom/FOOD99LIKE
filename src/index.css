@@ -70,19 +70,80 @@ body {
 
 .brand-theme [class~="text-[#43160f]"],
 .brand-theme [class~="text-[#4b2a22]"],
+.brand-theme [class~="text-[#4b231b]"],
+.brand-theme [class~="text-[#5a2a22]"],
 .brand-theme [class~="text-[#5e332a]"],
 .brand-theme [class~="text-[#5f3730]"],
+.brand-theme [class~="text-[#5f352c]"],
 .brand-theme [class~="text-[#6b3025]"],
-.brand-theme [class~="text-[#6b433a]"] {
+.brand-theme [class~="text-[#6b433a]"],
+.brand-theme [class~="text-[#6f4a41]"],
+.brand-theme [class~="text-[#79574f]"],
+.brand-theme [class~="text-[#7b5148]"],
+.brand-theme [class~="text-[#7d5148]"],
+.brand-theme [class~="text-[#7d6259]"],
+.brand-theme [class~="text-[#8b6d63]"],
+.brand-theme [class~="text-[#8b6d66]"],
+.brand-theme [class~="text-[#8c6056]"],
+.brand-theme [class~="text-[#8d5a4e]"],
+.brand-theme [class~="text-[#8f6b62]"],
+.brand-theme [class~="text-[#8f6f64]"],
+.brand-theme [class~="text-[#8f746d]"],
+.brand-theme [class~="text-[#8f7d77]"],
+.brand-theme [class~="text-[#9a7d76]"],
+.brand-theme [class~="text-[#9b817a]"],
+.brand-theme [class~="text-[#9b837a]"],
+.brand-theme [class~="text-[#9d817a]"],
+.brand-theme [class~="text-[#a98272]"] {
   color: var(--brand-primary) !important;
 }
 
-.brand-theme [class~="border-[#4b160e]"] {
+.brand-theme [class~="bg-[#4b160e]"],
+.brand-theme [class~="bg-[#43160f]"],
+.brand-theme [class~="bg-[#45150d]"],
+.brand-theme [class~="bg-[#46160f]"],
+.brand-theme [class~="bg-[#4a160f]"] {
+  background-color: var(--brand-primary) !important;
+}
+
+.brand-theme [class~="border-[#4b160e]"],
+.brand-theme [class~="border-[#43160f]"],
+.brand-theme [class~="border-[#4a160f]"],
+.brand-theme [class~="border-[#8d5a4e]"] {
   border-color: var(--brand-primary) !important;
 }
 
 .brand-theme .brand-photo-frame {
   border: 2px solid var(--brand-primary);
+}
+
+.brand-theme .brand-logo-frame {
+  border: 3px solid var(--brand-primary);
+}
+
+.admin-promo-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.admin-promo-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-circular-crop .cropper-view-box,
+.admin-circular-crop .cropper-face {
+  border-radius: 50%;
+}
+
+.admin-circular-crop .cropper-view-box {
+  outline: 2px solid rgb(255 255 255 / 90%);
+  outline-color: rgb(255 255 255 / 90%);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 45%);
+}
+
+.admin-circular-crop .cropper-line,
+.admin-circular-crop .cropper-point {
+  display: none;
 }
 
 .brand-theme [class~="ring-[#4b160e]"] {

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Cropper from 'cropperjs'
+import 'cropperjs/dist/cropper.css'
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,6 +15,9 @@ import {
   CreditCard,
   ExternalLink,
   Flame,
+  FlipHorizontal2,
+  FlipVertical2,
+  GripVertical,
   Heart,
   LayoutGrid,
   Leaf,
@@ -29,6 +34,8 @@ import {
   QrCode,
   ReceiptText,
   RefreshCw,
+  RotateCcw,
+  RotateCw,
   Save,
   Search,
   Settings,
@@ -131,6 +138,7 @@ const partnerLinks = {
   whatsapp: 'https://wa.me/5581999999999',
 }
 const protectedPromoSlideId = 'vezz-accessibility'
+const promoCardAspectRatio = 316 / 86
 
 const promoSlides = [
   {
@@ -490,11 +498,14 @@ function App() {
     isAdmin: false,
     error: '',
   })
+  const [adminAccessVerified, setAdminAccessVerified] = useState(false)
   const [adminLoginError, setAdminLoginError] = useState('')
   const [adminLoginLoading, setAdminLoginLoading] = useState(false)
   const [adminRegisterError, setAdminRegisterError] = useState('')
   const [adminRegisterLoading, setAdminRegisterLoading] = useState(false)
   const [adminPasswordResetLoading, setAdminPasswordResetLoading] = useState(false)
+  const [adminExitRequestId, setAdminExitRequestId] = useState(0)
+  const adminRouteExitAllowedRef = useRef(false)
   const [toasts, setToasts] = useState([])
   const speechStopTimerRef = useRef(null)
   const toastTimersRef = useRef(new Map())
@@ -519,7 +530,7 @@ function App() {
     [products],
   )
   const selectedProduct =
-    menuProducts.find((product) => product.id === selectedProductId) ?? menuProducts[0] ?? products[0]
+    menuProducts.find((product) => product.id === selectedProductId) ?? menuProducts[0]
   const selectedPromo = promoItems.find((slide) => slide.id === selectedPromoId) ?? promoItems[0]
   const cartItems = cart
     .map((item) => ({
@@ -569,10 +580,10 @@ function App() {
   }, [])
 
   const pushToast = useCallback(
-    ({ title, message = '', tone = 'success', duration = 6200 }) => {
+    ({ title, message = '', tone = 'success', duration = 6200, placement = 'top' }) => {
       const toastId = `toast-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-      setToasts((items) => [...items, { id: toastId, title, message, tone }].slice(-3))
+      setToasts((items) => [...items, { id: toastId, title, message, tone, placement }].slice(-3))
 
       const timer = window.setTimeout(() => {
         removeToast(toastId)
@@ -658,6 +669,9 @@ function App() {
       }
 
       const nextState = normalizeMenuStateSnapshot(savedState, slug)
+      await preloadImages([nextState.profile.logo, nextState.profile.cover])
+      if (cancelled) return
+
       setActiveRestaurantId(resolvedRestaurantId)
       analyticsSession.restaurantId = resolvedRestaurantId
 
@@ -675,28 +689,20 @@ function App() {
       setMenuLoadState({ failed: false, loading: false, slug })
     }
 
-    hydrateMenuState()
+    hydrateMenuState().catch(() => {
+      if (!cancelled) {
+        setMenuLoadState({
+          failed: isCustomMenuSlug(slug),
+          loading: false,
+          slug,
+        })
+      }
+    })
 
     return () => {
       cancelled = true
     }
   }, [activeMenuSlug, menuReloadToken])
-
-  useEffect(() => {
-    if (!menuStateLoadedRef.current || !adminSession.isAdmin) return undefined
-
-    const normalizedProfile = normalizeRestaurantProfile(restaurantProfile)
-    const saveTimer = window.setTimeout(() => {
-      saveMenuState(
-        activeRestaurantId,
-        normalizedProfile.slug,
-        buildMenuStateSnapshot(normalizedProfile, promoItems, products, categories),
-        { remote: true },
-      )
-    }, 700)
-
-    return () => window.clearTimeout(saveTimer)
-  }, [adminSession.isAdmin, activeMenuSlug, activeRestaurantId, categories, products, promoItems, restaurantProfile])
 
   useEffect(() => {
     if (screen === 'pedido') {
@@ -708,6 +714,19 @@ function App() {
     function syncRouteFromHash() {
       const nextScreen = getInitialScreen()
       const nextMenuSlug = getMenuSlugFromHash()
+
+      if (
+        screen === 'admin-cardapio'
+        && adminAccessVerified
+        && nextScreen !== 'admin-cardapio'
+        && !adminRouteExitAllowedRef.current
+      ) {
+        setAdminExitRequestId((current) => current + 1)
+        window.location.hash = getAdminPrincipalHash()
+        return
+      }
+
+      adminRouteExitAllowedRef.current = false
 
       setScreen(nextScreen)
 
@@ -795,12 +814,23 @@ function App() {
     window.location.hash = normalizedHash
   }
 
+  function returnToPublicMenu() {
+    const menuSlug = activeMenuSlug || restaurantProfile.slug || restaurantProfile.name
+
+    stopSpeech()
+    adminRouteExitAllowedRef.current = true
+    setAdminAccessVerified(false)
+    setScreen('menu')
+    window.history.replaceState(null, '', `#${getPublicMenuHash(menuSlug)}`)
+  }
+
   function openAdminPrincipal() {
     showScreen('admin-cardapio', getAdminPrincipalHash())
   }
 
   async function requestAdminAccess() {
     setAdminLoginError('')
+    setAdminAccessVerified(false)
 
     if (adminSession.user) {
       await logoutAdmin().catch(() => {})
@@ -827,11 +857,8 @@ function App() {
       setActiveRestaurantId(adminRestaurantId)
       setActiveMenuSlug(adminMenuSlug)
       setAdminSession({ loading: false, user: credential.user, isAdmin: true, error: '' })
+      setAdminAccessVerified(true)
       trackEvent('admin_login', { email })
-      pushToast({
-        title: 'Login confirmado',
-        message: 'Painel administrativo aberto.',
-      })
       openAdminPrincipal()
     } catch (error) {
       const message = translateAdminAuthError(error)
@@ -860,6 +887,7 @@ function App() {
         isAdmin: true,
         error: '',
       })
+      setAdminAccessVerified(true)
       setAdminLoginError('')
       trackEvent('admin_register', { email })
       pushToast({
@@ -922,6 +950,7 @@ function App() {
 
   async function handleAdminLogout() {
     await logoutAdmin()
+    setAdminAccessVerified(false)
     setAdminLoginError('')
     pushToast({
       title: 'Sessao encerrada',
@@ -1417,11 +1446,12 @@ function App() {
         )}
 
         {!menuPlaceholderActive && screen === 'entrada' && (
-          <EntryScreen onStart={startMenuMode} />
+          <EntryScreen restaurantProfile={restaurantProfile} onStart={startMenuMode} />
         )}
 
         {!menuPlaceholderActive && screen === 'menu' && (
           <MenuScreen
+            categories={categories}
             products={menuProducts}
             categories={categories}
             activeCategory={activeCategory}
@@ -1519,19 +1549,20 @@ function App() {
           />
         )}
 
-        {screen === 'configuracoes' && !adminSession.isAdmin && (
+        {screen === 'configuracoes' && (!adminSession.isAdmin || !adminAccessVerified) && (
           <AdminLoginScreen
+            restaurantProfile={restaurantProfile}
             defaultEmail={defaultAdminEmail}
             error={adminLoginError}
             loading={adminLoginLoading || adminSession.loading}
             recoveryLoading={adminPasswordResetLoading}
-            onBack={() => showScreen('menu')}
+            onBack={returnToPublicMenu}
             onLogin={handleAdminLogin}
             onRecoverPassword={handleAdminPasswordReset}
           />
         )}
 
-        {screen === 'configuracoes' && adminSession.isAdmin && (
+        {screen === 'configuracoes' && adminSession.isAdmin && adminAccessVerified && (
           <SettingsScreen
             adminEmail={adminSession.user?.email ?? ''}
             copied={copied}
@@ -1553,13 +1584,14 @@ function App() {
           />
         )}
 
-        {screen === 'admin-cardapio' && !adminSession.isAdmin && (
+        {screen === 'admin-cardapio' && (!adminSession.isAdmin || !adminAccessVerified) && (
           <AdminLoginScreen
+            restaurantProfile={restaurantProfile}
             defaultEmail={defaultAdminEmail}
             error={adminLoginError}
             loading={adminLoginLoading || adminSession.loading}
             recoveryLoading={adminPasswordResetLoading}
-            onBack={() => showScreen('menu')}
+            onBack={returnToPublicMenu}
             onLogin={handleAdminLogin}
             onRecoverPassword={handleAdminPasswordReset}
           />
@@ -1567,6 +1599,7 @@ function App() {
 
         {screen === 'cadastro-administrador' && (
           <AdminRegisterScreen
+            restaurantProfile={restaurantProfile}
             defaultEmail={defaultAdminEmail}
             error={adminRegisterError}
             loading={adminRegisterLoading}
@@ -1575,30 +1608,70 @@ function App() {
           />
         )}
 
-        {screen === 'admin-cardapio' && adminSession.isAdmin && (
+        {screen === 'admin-cardapio' && adminSession.isAdmin && adminAccessVerified && (
           <AdminMenuEditor
             categories={categories}
+            exitRequestId={adminExitRequestId}
             products={products}
             promoItems={promoItems}
             restaurantProfile={restaurantProfile}
             onUpdateProfile={(nextProfile) => setRestaurantProfile(normalizeRestaurantProfile(nextProfile))}
             onAddAdminItem={addAdminItem}
-            onBack={() => showScreen('menu')}
-            onDone={(nextProfile) => {
+            onBack={async () => {
+              adminRouteExitAllowedRef.current = true
+              await handleAdminLogout()
+              setAdminAccessVerified(false)
+              showScreen('menu')
+            }}
+            onDone={async (nextProfile, editorState = {}) => {
               if (nextProfile) {
                 const normalizedProfile = normalizeRestaurantProfile(nextProfile)
+                const nextProducts = editorState.products ?? products
+                const nextPromos = editorState.promoItems ?? promoItems
+                const nextCategories = editorState.categories ?? categories
 
-                setActiveMenuSlug(normalizedProfile.slug)
-                setRestaurantProfile(normalizedProfile)
-                saveMenuState(
-                  activeRestaurantId,
-                  normalizedProfile.slug,
-                  buildMenuStateSnapshot(normalizedProfile, promoItems, products, categories),
-                  { remote: adminSession.isAdmin },
-                )
-                showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
-                return
+                try {
+                  const menuState = buildMenuStateSnapshot(
+                    normalizedProfile,
+                    nextPromos,
+                    nextProducts,
+                    nextCategories,
+                  )
+                  const published = await saveMenuState(
+                    activeRestaurantId,
+                    normalizedProfile.slug,
+                    menuState,
+                    { remote: adminSession.isAdmin },
+                  )
+
+                  if (!published) throw new Error('Firebase menu publication failed')
+
+                  setActiveMenuSlug(normalizedProfile.slug)
+                  setRestaurantProfile(menuState.profile)
+                  setProducts(menuState.products)
+                  setPromoItems(menuState.promoItems)
+                  setCategories(menuState.categories)
+                  pushToast({
+                    title: 'Alterações salvas com sucesso',
+                    message: 'O cardápio principal já foi atualizado.',
+                    placement: 'center',
+                  })
+                  adminRouteExitAllowedRef.current = true
+                  setAdminAccessVerified(false)
+                  showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
+                  return
+                } catch {
+                  pushToast({
+                    title: 'Não foi possível publicar',
+                    message: 'Verifique sua conexão e tente salvar novamente.',
+                    tone: 'error',
+                    placement: 'center',
+                  })
+                  return
+                }
               }
+              adminRouteExitAllowedRef.current = true
+              setAdminAccessVerified(false)
               showScreen('menu')
             }}
             onRemoveProduct={removeProduct}
@@ -1616,7 +1689,10 @@ function App() {
             orderSent={orderSent}
             restaurantProfile={restaurantProfile}
             tableNumber={tableNumber}
-            onBack={() => showScreen('menu')}
+            onBack={() => {
+              setAdminAccessVerified(false)
+              showScreen('menu')
+            }}
             onEditCartItem={openCartItemEditor}
             onFinishOrder={() => {
               setOrderSent(false)
@@ -1642,11 +1718,18 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
   return (
     <section
       aria-busy={!failed}
+      role="status"
+      aria-live="polite"
+      aria-label={failed ? 'Cardapio indisponivel' : 'Carregando cardapio'}
       className="grid h-full place-items-center bg-white px-8 text-center text-slate-950"
     >
       <div className="grid max-w-[280px] justify-items-center gap-5">
         <div className="grid size-16 place-items-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-200">
-          <ReceiptText size={30} strokeWidth={1.9} />
+          {failed ? (
+            <ReceiptText size={30} strokeWidth={1.9} />
+          ) : (
+            <span className="size-8 animate-spin rounded-full border-[3px] border-white/30 border-t-white" aria-hidden="true" />
+          )}
         </div>
         <div>
           <h1 data-screen-title="true" tabIndex={-1} className="text-xl font-black uppercase outline-none">
@@ -1673,15 +1756,27 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
   )
 }
 
-function EntryScreen({ onStart }) {
+function preloadImages(sources = []) {
+  return Promise.all(
+    sources.filter(Boolean).map((source) => new Promise((resolve) => {
+      const image = new Image()
+      image.onload = resolve
+      image.onerror = resolve
+      image.src = source
+      if (image.complete) resolve()
+    })),
+  )
+}
+
+function EntryScreen({ restaurantProfile = defaultRestaurantProfile, onStart }) {
   return (
     <section className="relative h-full overflow-hidden bg-[#46160f] px-14 text-[#d7ac5f]">
       <div className="absolute -right-20 top-0 size-60 rounded-full border border-[#8e6035]/20" />
       <div className="absolute -bottom-20 -left-24 size-72 rounded-full border border-[#8e6035]/20" />
       <div className="flex h-full flex-col items-center justify-center gap-10">
         <img
-          src={cocoLogo}
-          alt="Coco Bambu"
+          src={restaurantProfile.logo}
+          alt={restaurantProfile.name}
           loading="eager"
           decoding="sync"
           className="w-[250px]"
@@ -1703,7 +1798,7 @@ function EntryScreen({ onStart }) {
             </button>
           ))}
         </div>
-        <p className="text-base font-medium">@cocobambuoficial</p>
+        <p className="text-base font-medium">@{restaurantProfile.slug}</p>
       </div>
     </section>
   )
@@ -1719,7 +1814,7 @@ function CategoriesScreen({ categories, restaurantProfile = defaultRestaurantPro
           alt={restaurantProfile.name}
           loading="eager"
           decoding="sync"
-          className="absolute left-1/2 top-[-70px] z-20 size-[96px] -translate-x-1/2 rounded-full bg-[#4a160f]"
+          className="brand-logo-frame absolute left-1/2 top-[-70px] z-20 size-[96px] -translate-x-1/2 rounded-full bg-[#4a160f] object-cover"
         />
         <h1 data-screen-title="true" tabIndex={-1} className="font-anton text-center text-[17px] font-normal leading-none outline-none">
           CATEGORIAS
@@ -1831,7 +1926,7 @@ function CategoryDishCard({ product, onOpen }) {
         <span className="line-clamp-3 block max-h-[51px] self-center overflow-hidden text-[12.5px] font-normal leading-[17px]">
           {product.description}
         </span>
-        <span className="block text-[13px] font-bold">{formatCurrency(product.price)}</span>
+        <span className="block text-[15px] font-bold">{formatCurrency(product.price)}</span>
       </span>
       <span className="brand-photo-frame relative block h-[90px] self-center overflow-hidden rounded-lg bg-[#4b160e]">
         <ImageWithFallback
@@ -1906,8 +2001,8 @@ function ImageWithFallback({ src, fallbackSrc, alt = '', onError, ...props }) {
 }
 
 function MenuScreen({
+  categories: categoryItems = categories,
   products,
-  categories,
   activeCategory,
   menuCategorySelected,
   cartQuantity,
@@ -1936,13 +2031,17 @@ function MenuScreen({
   const productSearch = searchProducts(products, searchQuery)
   const visibleProducts = productSearch.items
   const isSearching = Boolean(normalizeText(searchQuery))
-  const selectedCategory = categories.find((category) => category.id === activeCategory) ?? categories[0]
+  const selectedCategory = categoryItems.find((category) => category.id === activeCategory) ?? categoryItems[0]
   const categoryProducts = visibleProducts.filter((product) => product.category === activeCategory)
-  const featuredProducts = visibleProducts.slice(0, menuMode === 'simplificado' ? 4 : 5)
+  const categorizedProducts = visibleProducts.filter((product) => categoryItems.some((category) => category.id === product.category))
+  const featuredProducts = [...categorizedProducts]
+    .sort((first, second) => Number(second.featured === true) - Number(first.featured === true) || (first.featuredOrder ?? 999) - (second.featuredOrder ?? 999) || (second.featuredAt || 0) - (first.featuredAt || 0))
+    .slice(0, menuMode === 'simplificado' ? 4 : 5)
   const primaryProducts = isSearching ? visibleProducts : featuredProducts
-  const selectedDailySource = menuCategorySelected && categoryProducts.length ? categoryProducts : visibleProducts
+  const selectedDailySource = menuCategorySelected && categoryProducts.length ? categoryProducts : categorizedProducts
   const dailyProducts = selectedDailySource
     .filter((product) => !featuredProducts.some((featuredProduct) => featuredProduct.id === product.id))
+    .sort((first, second) => Number(second.daily === true) - Number(first.daily === true) || (second.dailyAt || 0) - (first.dailyAt || 0))
     .slice(0, menuMode === 'simplificado' ? 2 : 4)
   const menuSectionTitle = isSearching
     ? productSearch.mode === 'similar'
@@ -2003,7 +2102,7 @@ function MenuScreen({
         alt={restaurantProfile.name}
         loading="eager"
         decoding="sync"
-        className={`pointer-events-none absolute left-1/2 top-[50px] size-[96px] -translate-x-1/2 rounded-full bg-[var(--brand-primary)] object-cover transition-all duration-500 ease-out ${
+        className={`brand-logo-frame pointer-events-none absolute left-1/2 top-[50px] size-[96px] -translate-x-1/2 rounded-full bg-[var(--brand-primary)] object-cover transition-all duration-500 ease-out ${
           menuSheetRaised ? 'z-0 -translate-y-5 opacity-0 scale-95' : 'z-30 translate-y-0 opacity-100 scale-100'
         }`}
         draggable="false"
@@ -2080,7 +2179,7 @@ function MenuScreen({
               className="-mx-8 -mt-2 overflow-x-auto overflow-y-hidden pt-3 [scrollbar-width:none] [touch-action:pan-x_pinch-zoom]"
             >
               <div className="flex w-max translate-y-1.5 gap-2 px-3 pb-1">
-                {categories.map((category) => (
+                {categoryItems.map((category) => (
                   <CategoryPreviewCard
                     key={category.id}
                     category={category}
@@ -2125,7 +2224,7 @@ function MenuScreen({
             <div className="mt-4 flex items-center justify-between">
               <h2 className="text-[15px] font-medium">PRATOS DO DIA</h2>
               <span className="text-[11px] font-semibold text-[#a98272]">
-                {menuCategorySelected ? selectedCategory.label : 'Seleção da casa'}
+                {menuCategorySelected ? selectedCategory?.label ?? 'Categoria' : 'Seleção da casa'}
               </span>
             </div>
 
@@ -2156,6 +2255,14 @@ function PromoCarousel({ activeIndex, slides = promoSlides, onSelect, onOpenProm
   const [slideWidth, setSlideWidth] = useState(316)
   const [dragOffset, setDragOffset] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const dragPreviewDirection = dragOffset < slideWidth * -0.28
+    ? 1
+    : dragOffset > slideWidth * 0.28
+      ? -1
+      : 0
+  const visualActiveIndex = slides.length
+    ? (activeIndex + dragPreviewDirection + slides.length) % slides.length
+    : 0
 
   useEffect(() => {
     const carousel = carouselRef.current
@@ -2272,50 +2379,73 @@ function PromoCarousel({ activeIndex, slides = promoSlides, onSelect, onOpenProm
   if (!slides.length) return null
 
   return (
-    <div
-      ref={carouselRef}
-      className="relative h-[96px] w-full touch-pan-y overflow-hidden py-[5px]"
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchCancel}
-    >
-      {slides.map((slide, index) => {
-        const offset = getSlideOffset(index)
-        const slidePosition = offset + dragOffset / slideWidth
-        const distanceFromCenter = Math.abs(slidePosition)
-        const isActive = offset === 0
-        const slideScale = 1 - Math.min(distanceFromCenter, 1) * 0.08
+    <div className="w-full">
+      <div
+        ref={carouselRef}
+        className="relative h-[96px] w-full touch-pan-y overflow-hidden py-[5px]"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
+      >
+        {slides.map((slide, index) => {
+          const offset = getSlideOffset(index)
+          const slidePosition = offset + dragOffset / slideWidth
+          const distanceFromCenter = Math.abs(slidePosition)
+          const isActive = offset === 0
+          const slideScale = 1 - Math.min(distanceFromCenter, 1) * 0.08
 
-        return (
+          return (
+            <button
+              type="button"
+              key={slide.id}
+              onClick={() => handleSlideClick(slide, index)}
+              aria-label={slide.action === 'vezz' ? 'Abrir Vezz' : slide.alt}
+              aria-current={isActive}
+              className={`absolute left-1/2 top-[5px] grid h-[86px] place-items-center overflow-hidden rounded-lg shadow-[0_10px_24px_rgba(67,22,15,0.10)] ${
+                isDragging ? 'transition-none' : 'transition-all duration-700 ease-out'
+              } ${
+                slide.id === protectedPromoSlideId ? 'bg-[#15c8d0]' : 'bg-[#4b160e]'
+              }`}
+              style={{
+                width: `${slideWidth}px`,
+                transform: `translateX(calc(-50% + ${offset * slideWidth + dragOffset}px)) scale(${slideScale})`,
+                opacity: distanceFromCenter > 1.35 ? 0 : 1,
+                zIndex: Math.round((2 - Math.min(distanceFromCenter, 2)) * 10),
+              }}
+            >
+              <ImageWithFallback
+                src={slide.image}
+                fallbackSrc={slide.id === protectedPromoSlideId ? slideVezzBanner : promoShrimp}
+                alt={slide.alt}
+                className={`h-full w-full ${slide.fit === 'cover' ? 'object-cover' : 'object-contain'}`}
+                draggable="false"
+              />
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="mt-1 flex items-center justify-center gap-1.5" role="tablist" aria-label="Promoções">
+        {slides.map((slide, index) => (
           <button
             type="button"
             key={slide.id}
-            onClick={() => handleSlideClick(slide, index)}
-            aria-label={slide.action === 'vezz' ? 'Abrir Vezz' : slide.alt}
-            aria-current={isActive}
-            className={`absolute left-1/2 top-[5px] grid h-[86px] place-items-center overflow-hidden rounded-lg shadow-[0_10px_24px_rgba(67,22,15,0.10)] ${
-              isDragging ? 'transition-none' : 'transition-all duration-700 ease-out'
-            } ${
-              slide.id === protectedPromoSlideId ? 'bg-[#15c8d0]' : 'bg-[#4b160e]'
+            role="tab"
+            onClick={() => onSelect(index)}
+            aria-label={`Mostrar promoção ${index + 1} de ${slides.length}`}
+            aria-selected={index === visualActiveIndex}
+            aria-current={index === visualActiveIndex ? 'true' : undefined}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              index === visualActiveIndex
+                ? 'w-3.5 bg-slate-600'
+                : 'w-1.5 bg-slate-300 hover:bg-slate-400'
             }`}
-            style={{
-              width: `${slideWidth}px`,
-              transform: `translateX(calc(-50% + ${offset * slideWidth + dragOffset}px)) scale(${slideScale})`,
-              opacity: distanceFromCenter > 1.35 ? 0 : 1,
-              zIndex: Math.round((2 - Math.min(distanceFromCenter, 2)) * 10),
-            }}
           >
-            <ImageWithFallback
-              src={slide.image}
-              fallbackSrc={slide.id === protectedPromoSlideId ? slideVezzBanner : promoShrimp}
-              alt={slide.alt}
-              className={`h-full w-full ${slide.fit === 'cover' ? 'object-cover' : 'object-contain'}`}
-              draggable="false"
-            />
+            <span className="sr-only">{slide.alt || `Promoção ${index + 1}`}</span>
           </button>
-        )
-      })}
+        ))}
+      </div>
     </div>
   )
 }
@@ -2326,23 +2456,35 @@ function CategoryPreviewCard({ category, active, onClick }) {
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="min-h-[98px] w-[calc((min(100vw,430px)-48px)/3)] flex-none text-center"
+      className="min-h-[112px] w-[calc((min(100vw,430px)-48px)/3)] flex-none text-center"
     >
       <span
-        className={`brand-photo-frame block h-[84px] overflow-hidden rounded-md bg-[#4b160e] transition ${
+        className={`brand-photo-frame relative block h-[84px] rounded-md bg-[#4b160e] transition ${
           active ? 'ring-2 ring-[#4b160e] ring-offset-2 ring-offset-white' : ''
         }`}
       >
+        <span className="block size-full overflow-hidden rounded-[4px]">
+          <ImageWithFallback
+            src={category.image}
+            fallbackSrc={fallbackImages[category.id] || categoriaEntradas}
+            alt=""
+            loading="eager"
+            decoding="sync"
+            className="block size-full scale-[1.08] object-cover object-center"
+            draggable="false"
+          />
+        </span>
         <ImageWithFallback
-          src={category.image}
-          fallbackSrc={fallbackImages[category.id] || categoriaEntradas}
+          src={category.iconImage}
+          fallbackSrc={iconEntradas}
           alt=""
           loading="eager"
           decoding="sync"
-          className="block size-full scale-[1.08] object-cover object-center"
+          className="absolute bottom-[-16px] left-1/2 z-10 size-[42px] -translate-x-1/2 rounded-full object-cover drop-shadow-md"
+          draggable="false"
         />
       </span>
-      <span className="font-montserrat mt-2 flex h-7 items-start justify-center px-1 text-center text-[11px] font-semibold leading-[1.2] tracking-[0.01em]">
+      <span className="font-montserrat mt-5 flex h-7 items-start justify-center px-1 text-center text-[11px] font-semibold leading-[1.2] tracking-[0.01em]">
         {category.label.toUpperCase()}
       </span>
     </button>
@@ -2369,7 +2511,7 @@ function ViewModeToggle({ value, onChange }) {
             aria-pressed={active}
             title={label}
             className={`grid size-8 place-items-center rounded-full transition-colors duration-200 ${
-              active ? 'bg-[#4b160e] text-white' : 'bg-transparent text-[#ad9d97] hover:bg-[#f5f1ef] hover:text-[#6f4a41]'
+              active ? 'bg-[var(--brand-primary)] text-white' : 'bg-transparent text-[#ad9d97] hover:bg-[#f5f1ef] hover:text-[var(--brand-primary)]'
             }`}
           >
             <Icon size={16} strokeWidth={active ? 1.9 : 1.6} />
@@ -2395,7 +2537,7 @@ function MenuProductCard({ product, onOpen }) {
         <span className="line-clamp-3 block max-h-[51px] self-center overflow-hidden text-[12.5px] font-normal leading-[17px]">
           {product.description}
         </span>
-        <span className="block text-[13px] font-bold">{formatCurrency(product.price)}</span>
+        <span className="block text-[15px] font-bold">{formatCurrency(product.price)}</span>
       </span>
       <span className="brand-photo-frame relative block h-[96px] self-center overflow-hidden rounded-lg bg-[#4b160e]">
         <ImageWithFallback
@@ -2439,14 +2581,14 @@ function MenuProductGridCard({ product, onOpen }) {
       <span className="mt-1 line-clamp-3 block h-12 max-h-12 overflow-hidden text-center text-[11.5px] font-normal leading-4 text-[#5e332a]">
         {product.description}
       </span>
-      <span className="mt-1.5 block text-center text-[13px] font-bold">{formatCurrency(product.price)}</span>
+      <span className="mt-1.5 block text-center text-[15px] font-bold">{formatCurrency(product.price)}</span>
     </button>
   )
 }
 
 function PromotionScreen({ promo, restaurantProfile = defaultRestaurantProfile, onBack, onOpenProduct }) {
   const includes = promo?.includes ?? ['Oferta especial da casa']
-  const conditions = promo?.conditions ?? ['Consulte disponibilidade com o garçom']
+  const conditions = promo?.conditions ?? []
 
   return (
     <section className="h-full overflow-y-auto overflow-x-hidden bg-white pb-8 text-[#4b160e]" aria-labelledby="promotion-title">
@@ -2483,16 +2625,18 @@ function PromotionScreen({ promo, restaurantProfile = defaultRestaurantProfile, 
           </div>
         </section>
 
-        <section className="mt-3 rounded-xl border border-[#eadfd9] bg-white p-4">
-          <h2 className="text-sm font-black uppercase">Condições</h2>
-          <div className="mt-3 space-y-2">
-            {conditions.map((item) => (
-              <p key={item} className="text-sm font-semibold leading-5 text-[#6b433a]">
-                {item}
-              </p>
-            ))}
-          </div>
-        </section>
+        {conditions.length > 0 && (
+          <section className="mt-3 rounded-xl border border-[#eadfd9] bg-white p-4">
+            <h2 className="text-sm font-black uppercase">Requisitos para compra</h2>
+            <div className="mt-3 space-y-2">
+              {conditions.map((item) => (
+                <p key={item} className="text-sm font-semibold leading-5 text-[#6b433a]">
+                  {item}
+                </p>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mt-3 rounded-xl bg-[#4b160e] p-4 text-white">
           <h2 className="text-sm font-black uppercase text-[#d8ad61]">Como será entregue</h2>
@@ -2634,7 +2778,7 @@ function ProductScreen({ product, restaurantProfile = defaultRestaurantProfile, 
                   <span className="block text-[15px] font-medium">{option.label}</span>
                   <span className="block text-[12px] font-medium text-[#a58f89]">{option.detail}</span>
                 </span>
-                <span className="text-[15px] font-black">{formatCurrency(option.price)}</span>
+                <span className="text-[16px] font-black">{formatCurrency(option.price)}</span>
                 <span className={`size-[18px] rounded-full border ${active ? 'border-[#4b160e] bg-[#4b160e]' : 'border-[#9f8881] bg-white'}`} />
               </button>
             )
@@ -2684,7 +2828,7 @@ function ProductScreen({ product, restaurantProfile = defaultRestaurantProfile, 
   )
 }
 
-function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onLogin, onRecoverPassword }) {
+function AdminLoginScreen({ restaurantProfile = defaultRestaurantProfile, error, loading, recoveryLoading = false, onBack, onLogin, onRecoverPassword }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
@@ -2701,7 +2845,7 @@ function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onL
   return (
     <section className="h-full overflow-hidden bg-white text-[#4b160e]" aria-labelledby="admin-login-title">
       <div className="relative h-[144px] overflow-hidden">
-        <img src={cocoBackground} alt="" className="h-full w-full object-cover" draggable="false" />
+        <img src={restaurantProfile.cover} alt="" className="h-full w-full object-cover" draggable="false" />
         <div className="absolute inset-0 bg-black/10" />
         <button
           type="button"
@@ -2715,8 +2859,8 @@ function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onL
 
       <div className="relative z-10 -mt-8 min-h-[calc(100%-112px)] rounded-t-[34px] bg-white px-8 pb-10 pt-[78px] shadow-[0_-14px_34px_rgba(67,22,15,0.10)]">
         <img
-          src={cocoLogo}
-          alt="Coco Bambu"
+          src={restaurantProfile.logo}
+          alt={restaurantProfile.name}
           loading="eager"
           decoding="sync"
           className="absolute left-1/2 top-[-70px] size-[96px] -translate-x-1/2 rounded-full bg-[#4b160e]"
@@ -2735,8 +2879,8 @@ function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onL
           <p className="mt-2.5 text-[13px] font-normal uppercase leading-none">ACESSO ADMINISTRATIVO</p>
 
           <form onSubmit={submitLogin} className="mt-7 space-y-2.5 text-left">
-          <label className="grid h-[52px] grid-cols-[24px_1fr] items-center gap-3 rounded-lg bg-[#eeeeee] px-4 text-[#a9908b]">
-            <Mail size={20} strokeWidth={1.8} />
+          <label className="grid h-[52px] grid-cols-[24px_1fr] items-center gap-3 rounded-lg border border-[var(--brand-primary)] bg-[#eeeeee] px-4">
+            <Mail size={20} strokeWidth={1.8} className="text-[var(--brand-primary)]" />
             <span className="sr-only">Email</span>
             <input
               type="email"
@@ -2748,8 +2892,8 @@ function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onL
             />
           </label>
 
-          <label className="grid h-[52px] grid-cols-[24px_1fr] items-center gap-3 rounded-lg bg-[#eeeeee] px-4 text-[#a9908b]">
-            <LockKeyhole size={20} strokeWidth={1.8} />
+          <label className="grid h-[52px] grid-cols-[24px_1fr] items-center gap-3 rounded-lg border border-[var(--brand-primary)] bg-[#eeeeee] px-4">
+            <LockKeyhole size={20} strokeWidth={1.8} className="text-[var(--brand-primary)]" />
             <span className="sr-only">Senha</span>
             <input
               type="password"
@@ -2790,7 +2934,7 @@ function AdminLoginScreen({ error, loading, recoveryLoading = false, onBack, onL
   )
 }
 
-function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegister }) {
+function AdminRegisterScreen({ restaurantProfile = defaultRestaurantProfile, defaultEmail = '', error, loading, onBack, onRegister }) {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState(defaultEmail)
   const [password, setPassword] = useState('')
@@ -2808,7 +2952,7 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
   return (
     <section className="h-full overflow-hidden bg-white text-[#4b160e]" aria-labelledby="admin-register-title">
       <div className="relative h-[144px] overflow-hidden">
-        <img src={cocoBackground} alt="" className="h-full w-full object-cover" draggable="false" />
+        <img src={restaurantProfile.cover} alt="" className="h-full w-full object-cover" draggable="false" />
         <div className="absolute inset-0 bg-black/10" />
         <button
           type="button"
@@ -2822,8 +2966,8 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
 
       <div className="relative z-10 -mt-8 min-h-[calc(100%-112px)] rounded-t-[34px] bg-white px-11 pt-[84px] shadow-[0_-14px_34px_rgba(67,22,15,0.10)]">
         <img
-          src={cocoLogo}
-          alt="Coco Bambu"
+          src={restaurantProfile.logo}
+          alt={restaurantProfile.name}
           loading="eager"
           decoding="sync"
           className="absolute left-1/2 top-[-70px] size-[96px] -translate-x-1/2 rounded-full bg-[#4b160e]"
@@ -2843,8 +2987,8 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
         </div>
 
         <form onSubmit={submitRegister} className="mt-8 space-y-3">
-          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] bg-[#eeeeee] px-5 text-[#a9908b]">
-            <UserRound size={22} strokeWidth={2} />
+          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] border border-[var(--brand-primary)] bg-[#eeeeee] px-5">
+            <UserRound size={22} strokeWidth={2} className="text-[var(--brand-primary)]" />
             <span className="sr-only">Usuario</span>
             <input
               type="text"
@@ -2856,8 +3000,8 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
             />
           </label>
 
-          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] bg-[#eeeeee] px-5 text-[#a9908b]">
-            <Mail size={22} strokeWidth={2} />
+          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] border border-[var(--brand-primary)] bg-[#eeeeee] px-5">
+            <Mail size={22} strokeWidth={2} className="text-[var(--brand-primary)]" />
             <span className="sr-only">Email</span>
             <input
               type="email"
@@ -2869,8 +3013,8 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
             />
           </label>
 
-          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] bg-[#eeeeee] px-5 text-[#a9908b]">
-            <LockKeyhole size={22} strokeWidth={2} />
+          <label className="grid h-[58px] grid-cols-[28px_1fr] items-center gap-3 rounded-[9px] border border-[var(--brand-primary)] bg-[#eeeeee] px-5">
+            <LockKeyhole size={22} strokeWidth={2} className="text-[var(--brand-primary)]" />
             <span className="sr-only">Senha</span>
             <input
               type="password"
@@ -2904,6 +3048,8 @@ function AdminRegisterScreen({ defaultEmail = '', error, loading, onBack, onRegi
 function ToastStack({ toasts, onDismiss }) {
   if (!toasts.length) return null
 
+  const centered = toasts.some((toast) => toast.placement === 'center')
+
   const toneClasses = {
     success: 'border-emerald-200 bg-white text-[#244537]',
     error: 'border-red-200 bg-white text-[#5f1a14]',
@@ -2917,7 +3063,9 @@ function ToastStack({ toasts, onDismiss }) {
   }
 
   return (
-    <div className="pointer-events-none fixed left-1/2 top-4 z-[140] grid w-[calc(100vw-32px)] max-w-[398px] -translate-x-1/2 gap-2">
+    <div className={`pointer-events-none fixed left-1/2 z-[140] grid w-[calc(100vw-40px)] max-w-[360px] -translate-x-1/2 gap-2 ${
+      centered ? 'top-1/2 -translate-y-1/2' : 'top-4'
+    }`}>
       {toasts.map((toast) => (
         <article
           key={toast.id}
@@ -3433,6 +3581,7 @@ function getAllergenIcon(label) {
 
 function AdminMenuEditor({
   categories,
+  exitRequestId = 0,
   products,
   promoItems = promoSlides,
   restaurantProfile = defaultRestaurantProfile,
@@ -3450,16 +3599,35 @@ function AdminMenuEditor({
   const [editorProfile, setEditorProfile] = useState(restaurantProfile)
   const [editorPromos, setEditorPromos] = useState(promoItems)
   const [editorCategories, setEditorCategories] = useState(categories)
+  const [editorProducts, setEditorProducts] = useState(products)
   const [editingPromoId, setEditingPromoId] = useState('')
   const [editingProductId, setEditingProductId] = useState('')
   const [editingCategoryId, setEditingCategoryId] = useState('')
   const [productReturnView, setProductReturnView] = useState('home')
+  const [productSelectionTarget, setProductSelectionTarget] = useState('')
+  const [draggedFeaturedId, setDraggedFeaturedId] = useState('')
+  const [adminPromoIndex, setAdminPromoIndex] = useState(0)
+  const adminPromoScrollRef = useRef(null)
   const [profileEditorOpen, setProfileEditorOpen] = useState(false)
   const [coverEditorOpen, setCoverEditorOpen] = useState(false)
   const [logoEditorOpen, setLogoEditorOpen] = useState(false)
   const [editorActionsOpen, setEditorActionsOpen] = useState(false)
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false)
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState(null)
+  const initialEditorStateRef = useRef(JSON.stringify({
+    profile: restaurantProfile,
+    promos: promoItems,
+    categories,
+    products,
+  }))
+
+  const hasPendingChanges = useMemo(() => JSON.stringify({
+    profile: editorProfile,
+    promos: editorPromos,
+    categories: editorCategories,
+    products: editorProducts,
+  }) !== initialEditorStateRef.current, [editorCategories, editorProducts, editorProfile, editorPromos])
 
   useEffect(() => {
     setEditorProfile(restaurantProfile)
@@ -3472,6 +3640,40 @@ function AdminMenuEditor({
   useEffect(() => {
     setEditorCategories(categories)
   }, [categories])
+
+  useEffect(() => {
+    setEditorProducts(products)
+  }, [products])
+
+  useEffect(() => {
+    if (!exitRequestId) return
+    setEditorActionsOpen(false)
+    setEditorView('home')
+    setExitConfirmOpen(true)
+  }, [exitRequestId])
+
+  useEffect(() => {
+    setAdminPromoIndex((current) => Math.min(current, Math.max(0, editorPromos.length - 1)))
+  }, [editorPromos.length])
+
+  function updateAdminPromoIndex(event) {
+    const container = event.currentTarget
+    const cards = [...container.querySelectorAll('[data-admin-promo-card]')]
+    if (!cards.length) return
+
+    const nearestIndex = cards.reduce((nearest, card, index) => (
+      Math.abs(card.offsetLeft - container.scrollLeft) < Math.abs(cards[nearest].offsetLeft - container.scrollLeft)
+        ? index
+        : nearest
+    ), 0)
+    setAdminPromoIndex(nearestIndex)
+  }
+
+  function showAdminPromo(index) {
+    const card = adminPromoScrollRef.current?.querySelectorAll('[data-admin-promo-card]')?.[index]
+    card?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+    setAdminPromoIndex(index)
+  }
 
   function editProduct(product, returnView = 'home') {
     setEditingProductId(product.id)
@@ -3493,7 +3695,7 @@ function AdminMenuEditor({
       image: promoShrimp,
       alt: 'Novo card promocional',
       targetType: 'promotion',
-      fit: 'contain',
+      fit: 'cover',
     }
 
     setEditorPromos((items) => [...items, nextPromo])
@@ -3507,9 +3709,8 @@ function AdminMenuEditor({
     const nextPromos = editorPromos.map((item) => (item.id === updatedPromo.id ? { ...item, ...updatedPromo } : item))
 
     setEditorPromos(nextPromos)
-    onUpdatePromos?.(nextPromos)
     setEditingPromoId('')
-    onDone(editorProfile)
+    setEditorView('home')
   }
 
   function requestRemovePromo(slide) {
@@ -3520,7 +3721,6 @@ function AdminMenuEditor({
       onConfirm: () => {
         const nextPromos = editorPromos.filter((item) => item.id !== slide.id)
         setEditorPromos(nextPromos)
-        onUpdatePromos?.(nextPromos)
         setPendingDelete(null)
       },
     })
@@ -3539,18 +3739,33 @@ function AdminMenuEditor({
   }
 
   function saveProduct(productPayload) {
-    if (editingProductId) {
-      onUpdateProduct(productPayload)
-    } else {
-      onAddAdminItem(productPayload)
-    }
+    const nextProducts = editingProductId
+      ? editorProducts.map((item) =>
+          item.id === productPayload.id ? { ...item, ...productPayload } : item,
+        )
+      : [...editorProducts, { ...productPayload, active: true }]
 
-    onDone(editorProfile)
+    setEditorProducts(nextProducts)
+    setEditingProductId('')
+    setEditorView(productReturnView)
   }
 
   function saveEditorProfile() {
-    onUpdatePromos?.(editorPromos)
-    onDone(editorProfile)
+    onDone(editorProfile, {
+      products: editorProducts,
+      promoItems: editorPromos,
+      categories: editorCategories,
+    })
+  }
+
+  function requestSaveEditorProfile() {
+    setEditorActionsOpen(false)
+    setSaveConfirmOpen(true)
+  }
+
+  function confirmSaveEditorProfile() {
+    setSaveConfirmOpen(false)
+    saveEditorProfile()
   }
 
   function openExitConfirmation() {
@@ -3562,7 +3777,7 @@ function AdminMenuEditor({
     setPendingDelete({
       title: 'Voce tem certeza que deseja excluir?',
       onConfirm: () => {
-        onRemoveProduct(product.id)
+        setEditorProducts((items) => items.filter((item) => item.id !== product.id))
         setPendingDelete(null)
       },
     })
@@ -3571,6 +3786,24 @@ function AdminMenuEditor({
   function openCategoryProducts(categoryId) {
     setEditingCategoryId(categoryId)
     setEditorView('category-products')
+  }
+
+  function startProductSelection(target) {
+    setProductSelectionTarget(target)
+    setEditingCategoryId('')
+    setEditorView('categories')
+  }
+
+  function selectProductForSection(product) {
+    const timestamp = Date.now()
+    setEditorProducts((items) => items.map((item) => {
+      if (item.id !== product.id) return item
+      return productSelectionTarget === 'featured'
+        ? { ...item, featured: true, featuredAt: timestamp, featuredOrder: 0 }
+        : { ...item, daily: true, dailyAt: timestamp }
+    }))
+    setProductSelectionTarget('')
+    setEditorView('home')
   }
 
   function editCategory(category) {
@@ -3584,7 +3817,6 @@ function AdminMenuEditor({
     )
 
     setEditorCategories(nextCategories)
-    onUpdateCategories?.(nextCategories)
     setEditorView('categories')
   }
 
@@ -3604,7 +3836,6 @@ function AdminMenuEditor({
 
     const nextCategories = [...editorCategories, nextCategory]
     setEditorCategories(nextCategories)
-    onUpdateCategories?.(nextCategories)
     setEditingCategoryId(nextCategory.id)
     setEditorView('category-edit')
   }
@@ -3615,19 +3846,81 @@ function AdminMenuEditor({
       onConfirm: () => {
         const nextCategories = editorCategories.filter((item) => item.id !== category.id)
         setEditorCategories(nextCategories)
-        onUpdateCategories?.(nextCategories)
         setPendingDelete(null)
       },
     })
   }
 
-  const editingProduct = products.find((product) => product.id === editingProductId) ?? null
+  function toggleEditorProduct(productId) {
+    setEditorProducts((items) => items.map((item) => (
+      item.id === productId ? { ...item, active: item.active === false } : item
+    )))
+  }
+
+  function reorderFeaturedProducts(sourceId, targetId) {
+    if (!sourceId || !targetId || sourceId === targetId) return
+    const reordered = [...adminFeaturedProducts]
+    const sourceIndex = reordered.findIndex((product) => product.id === sourceId)
+    const targetIndex = reordered.findIndex((product) => product.id === targetId)
+    if (sourceIndex < 0 || targetIndex < 0) return
+
+    const [movedProduct] = reordered.splice(sourceIndex, 1)
+    reordered.splice(targetIndex, 0, movedProduct)
+    const orderById = new Map(reordered.map((product, index) => [product.id, index]))
+    setEditorProducts((items) => items.map((product) => (
+      orderById.has(product.id)
+        ? { ...product, featured: true, featuredOrder: orderById.get(product.id) }
+        : product
+    )))
+  }
+
+  function startFeaturedDrag(event, productId) {
+    setDraggedFeaturedId(productId)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', productId)
+
+    const sourceCard = event.currentTarget.closest('[data-featured-id]')
+    if (!sourceCard) return
+
+    const bounds = sourceCard.getBoundingClientRect()
+    const dragPreview = sourceCard.cloneNode(true)
+    dragPreview.removeAttribute('data-featured-id')
+    dragPreview.setAttribute('aria-hidden', 'true')
+    dragPreview.style.position = 'fixed'
+    dragPreview.style.left = '-10000px'
+    dragPreview.style.top = '-10000px'
+    dragPreview.style.width = `${bounds.width}px`
+    dragPreview.style.height = `${bounds.height}px`
+    dragPreview.style.opacity = '0.96'
+    dragPreview.style.pointerEvents = 'none'
+    dragPreview.style.transform = 'scale(1.02)'
+    dragPreview.style.filter = 'drop-shadow(0 18px 22px rgb(0 0 0 / 0.22))'
+    dragPreview.style.setProperty('--brand-primary', getComputedStyle(sourceCard).getPropertyValue('--brand-primary'))
+    document.body.appendChild(dragPreview)
+    event.dataTransfer.setDragImage(dragPreview, 28, bounds.height / 2)
+
+    window.requestAnimationFrame(() => dragPreview.remove())
+  }
+
+  function moveFeaturedFromTouch(event) {
+    const touch = event.touches?.[0]
+    if (!touch || !draggedFeaturedId) return
+    const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest?.('[data-featured-id]')
+    const targetId = target?.dataset?.featuredId
+    if (targetId) reorderFeaturedProducts(draggedFeaturedId, targetId)
+  }
+
+  const editingProduct = editorProducts.find((product) => product.id === editingProductId) ?? null
   const editingPromo = editorPromos.find((slide) => slide.id === editingPromoId) ?? editorPromos[0]
   const editingCategory =
     editorCategories.find((category) => category.id === editingCategoryId) ?? editorCategories[0] ?? categories[0]
-  const adminFeaturedProducts = products.slice(0, 5)
-  const adminDailyProducts = products
+  const categorizedEditorProducts = editorProducts.filter((product) => editorCategories.some((category) => category.id === product.category))
+  const adminFeaturedProducts = [...categorizedEditorProducts]
+    .sort((first, second) => Number(second.featured === true) - Number(first.featured === true) || (first.featuredOrder ?? 999) - (second.featuredOrder ?? 999) || (second.featuredAt || 0) - (first.featuredAt || 0))
+    .slice(0, 5)
+  const adminDailyProducts = [...categorizedEditorProducts]
     .filter((product) => !adminFeaturedProducts.some((featuredProduct) => featuredProduct.id === product.id))
+    .sort((first, second) => Number(second.daily === true) - Number(first.daily === true) || (second.dailyAt || 0) - (first.dailyAt || 0))
     .slice(0, 4)
   const deleteDialog = pendingDelete && (
     <AdminConfirmDialog
@@ -3658,7 +3951,7 @@ function AdminMenuEditor({
       <div className="relative h-full">
         <AdminPromoEditScreen
           promo={editingPromo}
-          products={products}
+          products={editorProducts}
           restaurantProfile={editorProfile}
           onBack={() => setEditorView('home')}
           onSave={savePromo}
@@ -3685,9 +3978,14 @@ function AdminMenuEditor({
           categories={editorCategories}
           restaurantProfile={editorProfile}
           onAddCategory={addCategory}
-          onBack={() => setEditorView('home')}
+          onBack={() => {
+            setProductSelectionTarget('')
+            setEditorView('home')
+          }}
           onEditCategory={editCategory}
+          onOpenCategory={(category) => openCategoryProducts(category.id)}
           onRemoveCategory={requestRemoveCategory}
+          selectionMode={productSelectionTarget}
         />
         {deleteDialog}
       </div>
@@ -3699,12 +3997,15 @@ function AdminMenuEditor({
       <div className="relative h-full">
         <AdminCategoryProductsEditorScreen
           category={editingCategory}
-          products={products.filter((product) => product.category === editingCategory.id)}
+          products={editorProducts.filter((product) => product.category === editingCategory.id)}
           restaurantProfile={editorProfile}
           onAddProduct={() => startNewProduct('category-products', editingCategory.id)}
           onBack={openCategoriesEditor}
           onEditProduct={(product) => editProduct(product, 'category-products')}
           onRemoveProduct={requestRemoveProduct}
+          onToggleProduct={toggleEditorProduct}
+          selectionMode={productSelectionTarget}
+          onSelectProduct={selectProductForSection}
         />
         {deleteDialog}
       </div>
@@ -3716,29 +4017,40 @@ function AdminMenuEditor({
       className="relative h-full overflow-y-auto overflow-x-hidden bg-[var(--brand-surface)] pb-8 text-[var(--brand-primary)]"
       style={buildThemeStyle(editorProfile)}
     >
-      <div className="relative h-[142px] overflow-visible">
-        <img src={editorProfile.cover} alt="" className="h-full w-full object-cover" draggable="false" />
-        <div className="absolute inset-0 bg-black/10" />
+      <div className="relative h-[142px] w-full overflow-visible">
+        <img
+          src={editorProfile.cover}
+          alt=""
+          className="pointer-events-none h-full w-full select-none object-cover"
+          draggable="false"
+        />
+        <span className="pointer-events-none absolute inset-0 bg-black/10" />
         <button
           type="button"
+          onPointerDown={(event) => {
+            if (event.isPrimary) setCoverEditorOpen(true)
+          }}
           onClick={() => setCoverEditorOpen(true)}
-          className="absolute bottom-8 right-5 z-20 inline-flex h-8 items-center gap-1.5 rounded-full bg-white/90 px-3 text-xs font-bold text-[#6b433a] shadow-md shadow-black/10 ring-1 ring-white/70 transition active:scale-[0.98]"
+          className="absolute bottom-8 right-5 z-50 inline-flex h-8 w-fit touch-manipulation items-center gap-1.5 rounded-full bg-white/90 px-3 text-xs font-bold text-[#6b433a] shadow-md shadow-black/10 ring-1 ring-white/70 transition active:scale-95"
+          aria-label="Trocar foto da capa"
+          aria-haspopup="dialog"
+          aria-expanded={coverEditorOpen}
         >
-          <Camera size={15} />
-          Trocar capa
+          <Camera className="pointer-events-none" size={15} />
+          <span className="pointer-events-none">Trocar capa</span>
         </button>
       </div>
 
       <button
         type="button"
         onClick={openExitConfirmation}
-        className="fixed left-[max(1.75rem,calc((100vw-430px)/2+1.75rem))] top-[max(3rem,calc((100vh-932px)/2+3rem))] z-[180] grid size-9 place-items-center rounded-full bg-white/85 text-[var(--brand-primary)] shadow-lg shadow-black/15 ring-1 ring-white/70 transition active:scale-95"
+        className="fixed left-[max(1.75rem,calc((100vw-430px)/2+1.75rem))] top-[calc(env(safe-area-inset-top)+12px)] z-[180] grid size-9 place-items-center rounded-full bg-white/85 text-[var(--brand-primary)] shadow-lg shadow-black/15 ring-1 ring-white/70 transition active:scale-95 md:top-[max(3rem,calc((100vh-932px)/2+3rem))]"
         aria-label="Voltar ao cardapio"
       >
         <ArrowLeft size={20} strokeWidth={2} />
       </button>
 
-      <div className="fixed right-[max(1.75rem,calc((100vw-430px)/2+1.75rem))] top-[max(3rem,calc((100vh-932px)/2+3rem))] z-[180] grid justify-items-end gap-2">
+      <div className="fixed right-[max(1.75rem,calc((100vw-430px)/2+1.75rem))] top-[calc(env(safe-area-inset-top)+12px)] z-[180] grid justify-items-end gap-2 md:top-[max(3rem,calc((100vh-932px)/2+3rem))]">
         <button
           type="button"
           onClick={() => setEditorActionsOpen((currentValue) => !currentValue)}
@@ -3762,7 +4074,7 @@ function AdminMenuEditor({
         >
           <button
             type="button"
-            onClick={saveEditorProfile}
+            onClick={requestSaveEditorProfile}
             className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand-primary)] text-[11px] font-black uppercase tracking-wide text-white"
           >
             <Save size={13} />
@@ -3785,7 +4097,7 @@ function AdminMenuEditor({
             <img
               src={editorProfile.logo}
               alt={editorProfile.name}
-              className="size-[96px] rounded-full object-cover"
+              className="brand-logo-frame size-[96px] rounded-full object-cover"
               draggable="false"
             />
             <button
@@ -3800,7 +4112,7 @@ function AdminMenuEditor({
 
           <button
             type="button"
-            onClick={saveEditorProfile}
+            onClick={requestSaveEditorProfile}
             className="absolute top-16 right-0 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[var(--brand-primary)] px-3.5 text-[11px] font-medium tracking-[0.01em] text-white shadow-md shadow-[#4b160e]/10 transition active:scale-[0.98]"
           >
             <Save size={14} strokeWidth={2} />
@@ -3838,33 +4150,38 @@ function AdminMenuEditor({
         <div>
           <AdminEditorSectionTitle title="Cards de promoção" actionLabel="Adicionar" onAction={addPromo} useBrandFont />
         </div>
-        <div className="-mx-5 mt-1 flex gap-3 overflow-x-auto px-5 pb-1">
+        <div
+          ref={adminPromoScrollRef}
+          onScroll={updateAdminPromoIndex}
+          className="admin-promo-scroll -mx-5 mt-1 flex snap-x snap-mandatory scroll-pl-5 gap-3 overflow-x-auto pb-2 pl-5 pr-16"
+        >
           {editorPromos.map((slide) => {
             const locked = slide.id === protectedPromoSlideId
 
             return (
             <div
               key={slide.id}
-              className="grid w-[390px] max-w-[calc(100vw-40px)] shrink-0 grid-cols-[1fr_92px] gap-2 rounded-lg bg-slate-100 p-2"
+              data-admin-promo-card
+              className="grid w-[312px] max-w-[calc(100vw-102px)] shrink-0 snap-start grid-cols-[1fr_74px] gap-1.5 rounded-lg bg-slate-100 p-1.5 shadow-sm ring-1 ring-slate-200/70"
             >
               <div className="relative">
                 <img
                   src={slide.image}
                   alt={slide.alt}
-                  className="h-[108px] w-full rounded-md bg-[#4b160e] object-contain"
+                  className="h-[94px] w-full rounded-md bg-[#4b160e] object-contain"
                   draggable="false"
                 />
                 {locked && (
-                  <span className="absolute left-2 top-2 rounded-full bg-white/95 px-2 py-1 text-[9px] font-black uppercase text-[#4b160e] shadow">
+                  <span className="absolute left-1.5 top-1.5 rounded-full bg-white/95 px-1.5 py-0.5 text-[8px] font-black uppercase text-[#4b160e] shadow">
                     Fixo
                   </span>
                 )}
               </div>
               {locked ? (
-                <div className="grid content-center gap-2 rounded-lg bg-white/70 px-2 text-center text-[10px] font-black uppercase text-slate-500 ring-1 ring-slate-200">
-                  <LockKeyhole size={18} className="mx-auto text-slate-500" />
+                <div className="grid content-center gap-1 rounded-md bg-white/70 px-1.5 text-center text-[8px] font-black uppercase text-slate-500 ring-1 ring-slate-200">
+                  <LockKeyhole size={14} className="mx-auto text-slate-500" />
                   Slide fixo
-                  <span className="text-[9px] font-bold normal-case text-slate-400">Vezz protegido</span>
+                  <span className="text-[7px] font-bold normal-case text-slate-400">Vezz protegido</span>
                 </div>
               ) : (
                 <AdminActionStack onEdit={() => editPromo(slide)} onRemove={() => requestRemovePromo(slide)} />
@@ -3873,10 +4190,17 @@ function AdminMenuEditor({
             )
           })}
         </div>
-        <div className="mt-1 flex justify-center gap-1.5">
-          <span className="size-2 rounded-full bg-slate-300" />
-          <span className="size-2 rounded-full bg-slate-300" />
-          <span className="size-2 rounded-full bg-slate-300" />
+        <div className="mt-1 flex justify-center gap-1.5" aria-label="Posição dos cards promocionais">
+          {editorPromos.map((slide, index) => (
+            <button
+              type="button"
+              key={slide.id}
+              onClick={() => showAdminPromo(index)}
+              aria-label={`Mostrar card promocional ${index + 1}`}
+              aria-current={adminPromoIndex === index ? 'true' : undefined}
+              className={`size-1.5 rounded-full transition-all ${adminPromoIndex === index ? 'scale-125 bg-slate-600' : 'bg-slate-300'}`}
+            />
+          ))}
         </div>
 
         <AdminEditorSectionTitle title="Categorias" actionLabel="Editar" onAction={openCategoriesEditor} useBrandFont />
@@ -3903,20 +4227,54 @@ function AdminMenuEditor({
           </div>
         </div>
 
-        <AdminEditorSectionTitle title="Destaques" actionLabel="Adicionar" onAction={() => startNewProduct()} useBrandFont />
+        <AdminEditorSectionTitle title="Destaques" actionLabel="Selecionar prato" onAction={() => startProductSelection('featured')} useBrandFont />
+        {adminFeaturedProducts.length > 1 && (
+          <p className="mt-2 flex items-center justify-center gap-1.5 text-[10px] font-medium text-[#8f746d]">
+            <GripVertical size={13} />
+            Segure e arraste para alterar a ordem
+          </p>
+        )}
         <div className="mt-3 space-y-3">
           {adminFeaturedProducts.map((product) => (
-            <AdminProductEditorCard
+            <div
               key={product.id}
-              product={product}
-              onEdit={() => editProduct(product)}
-              onRemove={() => requestRemoveProduct(product)}
-              onToggle={() => onToggleProductActive(product.id)}
-            />
+              data-featured-id={product.id}
+              onDragOver={(event) => event.preventDefault()}
+              onDragEnter={() => {
+                if (draggedFeaturedId) reorderFeaturedProducts(draggedFeaturedId, product.id)
+              }}
+              onDrop={() => {
+                reorderFeaturedProducts(draggedFeaturedId, product.id)
+                setDraggedFeaturedId('')
+              }}
+              className={`relative transition ${draggedFeaturedId === product.id ? 'opacity-55' : 'opacity-100'}`}
+            >
+              <button
+                type="button"
+                draggable
+                onDragStart={(event) => startFeaturedDrag(event, product.id)}
+                onDragEnd={() => setDraggedFeaturedId('')}
+                onTouchStart={() => setDraggedFeaturedId(product.id)}
+                onTouchMove={moveFeaturedFromTouch}
+                onTouchEnd={() => setDraggedFeaturedId('')}
+                className="absolute left-1 top-1/2 z-20 grid size-8 -translate-y-1/2 touch-none place-items-center rounded-full bg-white/95 text-[var(--brand-primary)] shadow ring-1 ring-black/5"
+                aria-label={`Arrastar ${product.name} para alterar a ordem`}
+              >
+                <GripVertical size={17} />
+              </button>
+              <div className="pl-4">
+                <AdminProductEditorCard
+                  product={product}
+                  onEdit={() => editProduct(product)}
+                  onRemove={() => requestRemoveProduct(product)}
+                  onToggle={() => toggleEditorProduct(product.id)}
+                />
+              </div>
+            </div>
           ))}
         </div>
 
-        <AdminEditorSectionTitle title="Pratos do dia" actionLabel="Adicionar" onAction={() => startNewProduct()} />
+        <AdminEditorSectionTitle title="Pratos do dia" actionLabel="Selecionar prato" onAction={() => startProductSelection('daily')} />
         <div className="mt-3 space-y-3">
           {adminDailyProducts.map((product) => (
             <AdminProductEditorCard
@@ -3924,7 +4282,7 @@ function AdminMenuEditor({
               product={product}
               onEdit={() => editProduct(product)}
               onRemove={() => requestRemoveProduct(product)}
-              onToggle={() => onToggleProductActive(product.id)}
+              onToggle={() => toggleEditorProduct(product.id)}
             />
           ))}
         </div>
@@ -3948,7 +4306,6 @@ function AdminMenuEditor({
           onSave={(cover) => {
             const nextProfile = { ...editorProfile, cover }
             setEditorProfile(nextProfile)
-            onUpdateProfile?.(nextProfile)
             setCoverEditorOpen(false)
           }}
         />
@@ -3960,16 +4317,26 @@ function AdminMenuEditor({
           onSave={({ logo, theme }) => {
             const nextProfile = { ...editorProfile, logo, theme }
             setEditorProfile(nextProfile)
-            onUpdateProfile?.(nextProfile)
             setLogoEditorOpen(false)
           }}
         />
       )}
       {exitConfirmOpen && (
         <AdminExitConfirmDialog
+          hasChanges={hasPendingChanges}
           onCancel={() => setExitConfirmOpen(false)}
           onDiscard={onBack}
           onSave={saveEditorProfile}
+        />
+      )}
+      {saveConfirmOpen && (
+        <AdminConfirmDialog
+          centerText
+          title="Salvar alterações?"
+          description="As mudanças serão publicadas e ficarão visíveis no cardápio principal."
+          confirmLabel="Confirmar e salvar"
+          onCancel={() => setSaveConfirmOpen(false)}
+          onConfirm={confirmSaveEditorProfile}
         />
       )}
       {deleteDialog}
@@ -3997,7 +4364,11 @@ function AdminEditorSectionTitle({ title, actionLabel, onAction, useBrandFont = 
   )
 }
 
-function readAdminImageFile(file, onReady, { maxWidth = 900, maxHeight = 900, quality = 0.76 } = {}) {
+function readAdminImageFile(
+  file,
+  onReady,
+  { maxWidth = 900, maxHeight = 900, targetWidth = null, targetHeight = null, quality = 0.76 } = {},
+) {
   if (!file) return
 
   const reader = new FileReader()
@@ -4006,10 +4377,11 @@ function readAdminImageFile(file, onReady, { maxWidth = 900, maxHeight = 900, qu
     const image = new Image()
 
     image.onload = () => {
+      const hasTargetSize = Number(targetWidth) > 0 && Number(targetHeight) > 0
       const scale = Math.min(1, maxWidth / image.naturalWidth, maxHeight / image.naturalHeight)
       const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+      canvas.width = hasTargetSize ? targetWidth : Math.max(1, Math.round(image.naturalWidth * scale))
+      canvas.height = hasTargetSize ? targetHeight : Math.max(1, Math.round(image.naturalHeight * scale))
 
       const context = canvas.getContext('2d')
       if (!context) {
@@ -4017,7 +4389,36 @@ function readAdminImageFile(file, onReady, { maxWidth = 900, maxHeight = 900, qu
         return
       }
 
-      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      if (hasTargetSize) {
+        const sourceRatio = image.naturalWidth / image.naturalHeight
+        const targetRatio = targetWidth / targetHeight
+        let sourceX = 0
+        let sourceY = 0
+        let sourceWidth = image.naturalWidth
+        let sourceHeight = image.naturalHeight
+
+        if (sourceRatio > targetRatio) {
+          sourceWidth = image.naturalHeight * targetRatio
+          sourceX = (image.naturalWidth - sourceWidth) / 2
+        } else {
+          sourceHeight = image.naturalWidth / targetRatio
+          sourceY = (image.naturalHeight - sourceHeight) / 2
+        }
+
+        context.drawImage(
+          image,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          targetWidth,
+          targetHeight,
+        )
+      } else {
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      }
       onReady(canvas.toDataURL('image/webp', quality))
     }
 
@@ -4025,6 +4426,202 @@ function readAdminImageFile(file, onReady, { maxWidth = 900, maxHeight = 900, qu
     image.src = originalUrl
   }
   reader.readAsDataURL(file)
+}
+
+function AdminImageCropDialog({
+  source,
+  title = 'Recortar imagem',
+  description = 'Arraste a imagem e ajuste o zoom antes de confirmar.',
+  confirmLabel = 'Usar imagem',
+  aspectRatio = 1,
+  outputWidth = 360,
+  outputHeight = 360,
+  workspaceAspectRatio = aspectRatio,
+  circular = false,
+  quality = 0.85,
+  onCancel,
+  onConfirm,
+}) {
+  const imageRef = useRef(null)
+  const cropperRef = useRef(null)
+  const initialZoomRef = useRef(1)
+  const [zoomPercent, setZoomPercent] = useState(0)
+  const [horizontalScale, setHorizontalScale] = useState(1)
+  const [verticalScale, setVerticalScale] = useState(1)
+
+  useEffect(() => {
+    if (!imageRef.current) return undefined
+    const cropper = new Cropper(imageRef.current, {
+      aspectRatio,
+      viewMode: 1,
+      dragMode: 'move',
+      autoCropArea: 1,
+      background: false,
+      guides: false,
+      center: false,
+      highlight: false,
+      cropBoxMovable: false,
+      cropBoxResizable: false,
+      toggleDragModeOnDblclick: false,
+      responsive: true,
+      zoomOnTouch: true,
+      zoomOnWheel: true,
+      wheelZoomRatio: 0.02,
+      ready() {
+        const containerData = cropper.getContainerData()
+        const containerRatio = containerData.width / containerData.height
+        const cropWidth = containerRatio > aspectRatio
+          ? containerData.height * aspectRatio
+          : containerData.width
+        const cropHeight = cropWidth / aspectRatio
+
+        cropper.setCropBoxData({
+          left: (containerData.width - cropWidth) / 2,
+          top: (containerData.height - cropHeight) / 2,
+          width: cropWidth,
+          height: cropHeight,
+        })
+
+        const imageData = cropper.getImageData()
+        const cropBoxData = cropper.getCropBoxData()
+        const minimumZoom = Math.max(
+          cropBoxData.width / imageData.naturalWidth,
+          cropBoxData.height / imageData.naturalHeight,
+        )
+
+        initialZoomRef.current = minimumZoom || imageData.ratio || 1
+        cropper.zoomTo(initialZoomRef.current)
+        setZoomPercent(0)
+      },
+      zoom(event) {
+        const nextPercent = ((event.detail.ratio / initialZoomRef.current) - 1) * 100
+
+        if (nextPercent < -0.5 || nextPercent > 100.5) {
+          event.preventDefault()
+          return
+        }
+
+        setZoomPercent(Math.min(100, Math.max(0, nextPercent)))
+      },
+    })
+    cropperRef.current = cropper
+    return () => {
+      cropper.destroy()
+      cropperRef.current = null
+    }
+  }, [aspectRatio, source])
+
+  function updateZoom(event) {
+    const nextPercent = Number(event.target.value)
+    setZoomPercent(nextPercent)
+    cropperRef.current?.zoomTo(initialZoomRef.current * (1 + nextPercent / 100))
+  }
+
+  function resetZoom() {
+    setZoomPercent(0)
+    cropperRef.current?.zoomTo(initialZoomRef.current)
+  }
+
+  function rotateImage(degrees) {
+    cropperRef.current?.rotate(degrees)
+  }
+
+  function flipImage(axis) {
+    if (axis === 'horizontal') {
+      const nextScale = horizontalScale * -1
+      setHorizontalScale(nextScale)
+      cropperRef.current?.scaleX(nextScale)
+      return
+    }
+
+    const nextScale = verticalScale * -1
+    setVerticalScale(nextScale)
+    cropperRef.current?.scaleY(nextScale)
+  }
+
+  function confirmCrop() {
+    const croppedCanvas = cropperRef.current?.getCroppedCanvas({
+      width: outputWidth,
+      height: outputHeight,
+      imageSmoothingEnabled: true,
+      imageSmoothingQuality: 'high',
+    })
+    if (!croppedCanvas) return
+
+    if (!circular) {
+      onConfirm(croppedCanvas.toDataURL('image/webp', quality))
+      return
+    }
+
+    const outputCanvas = document.createElement('canvas')
+    outputCanvas.width = outputWidth
+    outputCanvas.height = outputHeight
+    const context = outputCanvas.getContext('2d')
+    if (!context) return
+    context.beginPath()
+    context.arc(outputWidth / 2, outputHeight / 2, Math.min(outputWidth, outputHeight) / 2, 0, Math.PI * 2)
+    context.closePath()
+    context.clip()
+    context.drawImage(croppedCanvas, 0, 0, outputWidth, outputHeight)
+    onConfirm(outputCanvas.toDataURL('image/webp', quality))
+  }
+
+  return (
+    <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/65 px-5 py-8 backdrop-blur-sm">
+      <section role="dialog" aria-modal="true" aria-labelledby="icon-crop-title" className="w-full max-w-[390px] rounded-[24px] bg-white p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="icon-crop-title" className="text-lg font-bold text-[#4b160e]">{title}</h2>
+            <p className="mt-1 text-xs leading-5 text-[#8f746d]">{description}</p>
+          </div>
+          <button type="button" onClick={onCancel} className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-[#6b433a]" aria-label="Cancelar recorte"><X size={18} /></button>
+        </div>
+        <div
+          className={`${circular ? 'admin-circular-crop' : ''} mt-5 w-full overflow-hidden rounded-2xl bg-slate-950`}
+          style={{ aspectRatio: workspaceAspectRatio }}
+        >
+          <img ref={imageRef} src={source} alt="Imagem selecionada para recorte" className="block max-w-full" />
+        </div>
+        <div className="mt-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-semibold text-[#6b433a]">Zoom</span>
+            <button type="button" onClick={resetZoom} className="text-[11px] font-medium text-[var(--brand-primary)]">
+              {Math.round(zoomPercent)}% · Redefinir
+            </button>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={Math.round(zoomPercent)}
+            onChange={updateZoom}
+            aria-label="Nível de zoom"
+            className="mt-2 w-full accent-[var(--brand-primary)]"
+          />
+          <p className="mt-1 text-[10px] text-[#9a7d76]">Arraste a barra ou use o gesto de pinça.</p>
+        </div>
+        <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-100 p-1">
+          <button type="button" onClick={() => rotateImage(-90)} aria-label="Girar à esquerda" title="Girar à esquerda" className="grid size-9 place-items-center rounded-lg text-slate-600 transition hover:bg-white">
+            <RotateCcw size={16} />
+          </button>
+          <button type="button" onClick={() => rotateImage(90)} aria-label="Girar à direita" title="Girar à direita" className="grid size-9 place-items-center rounded-lg text-slate-600 transition hover:bg-white">
+            <RotateCw size={16} />
+          </button>
+          <button type="button" onClick={() => flipImage('horizontal')} aria-label="Espelhar horizontalmente" title="Espelhar horizontalmente" className={`grid size-9 place-items-center rounded-lg transition ${horizontalScale < 0 ? 'bg-white text-[var(--brand-primary)] shadow-sm' : 'text-slate-600 hover:bg-white'}`}>
+            <FlipHorizontal2 size={16} />
+          </button>
+          <button type="button" onClick={() => flipImage('vertical')} aria-label="Espelhar verticalmente" title="Espelhar verticalmente" className={`grid size-9 place-items-center rounded-lg transition ${verticalScale < 0 ? 'bg-white text-[var(--brand-primary)] shadow-sm' : 'text-slate-600 hover:bg-white'}`}>
+            <FlipVertical2 size={16} />
+          </button>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button type="button" onClick={onCancel} className="h-11 rounded-full border border-[var(--brand-primary)] text-sm font-semibold text-[var(--brand-primary)]">Cancelar</button>
+          <button type="button" onClick={confirmCrop} className="h-11 rounded-full bg-[var(--brand-primary)] text-sm font-semibold text-white">{confirmLabel}</button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 function rgbToHex(red, green, blue) {
@@ -4103,6 +4700,7 @@ function extractLogoTheme(imageUrl) {
 function AdminCoverDialog({ cover, onCancel, onSave }) {
   const [preview, setPreview] = useState(cover)
   const [fileName, setFileName] = useState('')
+  const [cropSource, setCropSource] = useState('')
   const inputRef = useRef(null)
 
   function selectCover(event) {
@@ -4110,37 +4708,45 @@ function AdminCoverDialog({ cover, onCancel, onSave }) {
     if (!file) return
 
     setFileName(file.name)
-    readAdminImageFile(file, setPreview, { maxWidth: 1200, maxHeight: 480, quality: 0.78 })
+    const reader = new FileReader()
+    reader.onload = () => setCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
   return (
     <div className="fixed inset-0 z-[220] flex items-center justify-center bg-white/80 px-6 backdrop-blur-[2px]">
-      <section className="w-full max-w-[390px] rounded-[22px] border border-[#4b160e] bg-white p-5 shadow-2xl shadow-[#4b160e]/15">
+      <section role="dialog" aria-modal="true" aria-labelledby="admin-cover-title" className="w-full max-w-[390px] rounded-[22px] border border-[#4b160e] bg-white p-5 shadow-2xl shadow-[#4b160e]/15">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="font-montserrat text-lg font-medium text-[#4b160e]">Trocar foto da capa</h2>
+          <h2 id="admin-cover-title" className="font-montserrat text-lg font-medium text-[#4b160e]">Trocar foto da capa</h2>
           <button type="button" onClick={onCancel} className="grid size-9 place-items-center rounded-lg bg-slate-100 text-[#6b433a]" aria-label="Fechar">
             <X size={18} />
           </button>
         </div>
         <p className="mt-2 text-sm font-normal leading-5 text-[#8b6d66]">
-          Escolha uma foto horizontal de 1200 × 400 px para obter melhor resolução.
+          Para melhor definição, envie uma imagem horizontal de 1200 × 400 px.
         </p>
 
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="mt-5 block w-full overflow-hidden rounded-xl border border-dashed border-[#b7928b] bg-[#faf8f7] p-2 text-center"
-        >
-          <img src={preview} alt="Prévia da capa" className="h-[160px] w-full rounded-lg object-cover" draggable="false" />
-          <span className="mt-3 inline-flex h-10 items-center gap-2 rounded-full bg-[#4b160e] px-5 text-sm font-medium text-white">
+        <div className="mt-5 w-full overflow-hidden rounded-xl border border-dashed border-[#b7928b] bg-[#faf8f7] p-2 text-center">
+          <img
+            src={preview}
+            alt="Prévia da capa"
+            className="pointer-events-none h-[160px] w-full select-none rounded-lg object-cover"
+            draggable="false"
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="mt-3 inline-flex h-10 items-center gap-2 rounded-full bg-[#4b160e] px-5 text-sm font-medium text-white transition active:scale-95"
+            aria-label="Escolher nova foto de capa"
+          >
             <Camera size={17} />
-            Escolher foto
-          </span>
+            Adicionar imagem
+          </button>
           <span className="mt-2 block truncate px-3 text-xs font-normal text-[#8b6d66]">
             {fileName || 'Envie uma imagem JPG ou PNG'}
           </span>
-        </button>
+        </div>
         <input ref={inputRef} type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" className="sr-only" onChange={selectCover} />
 
         <div className="mt-5 grid grid-cols-2 gap-3">
@@ -4148,10 +4754,27 @@ function AdminCoverDialog({ cover, onCancel, onSave }) {
             Cancelar
           </button>
           <button type="button" onClick={() => onSave(preview)} disabled={!fileName} className="h-10 rounded-full bg-[#4b160e] text-sm font-medium text-white disabled:opacity-40">
-            Usar foto
+            Salvar foto
           </button>
         </div>
       </section>
+      {cropSource && (
+        <AdminImageCropDialog
+          source={cropSource}
+          title="Ajustar capa"
+          description="Arraste a imagem e ajuste o zoom. A área destacada será usada como capa."
+          confirmLabel="Usar capa"
+          aspectRatio={3}
+          outputWidth={1200}
+          outputHeight={400}
+          quality={0.82}
+          onCancel={() => setCropSource('')}
+          onConfirm={(imageUrl) => {
+            setPreview(imageUrl)
+            setCropSource('')
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -4161,6 +4784,7 @@ function AdminLogoDialog({ logo, onCancel, onSave }) {
   const [fileName, setFileName] = useState('')
   const [detectedTheme, setDetectedTheme] = useState(null)
   const [analyzing, setAnalyzing] = useState(false)
+  const [cropSource, setCropSource] = useState('')
   const inputRef = useRef(null)
 
   function selectLogo(event) {
@@ -4168,12 +4792,9 @@ function AdminLogoDialog({ logo, onCancel, onSave }) {
     if (!file) return
 
     setFileName(file.name)
-    setAnalyzing(true)
-    readAdminImageFile(file, async (imageUrl) => {
-      setPreview(imageUrl)
-      setDetectedTheme(await extractLogoTheme(imageUrl))
-      setAnalyzing(false)
-    }, { maxWidth: 640, maxHeight: 640, quality: 0.8 })
+    const reader = new FileReader()
+    reader.onload = () => setCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
@@ -4187,7 +4808,7 @@ function AdminLogoDialog({ logo, onCancel, onSave }) {
           </button>
         </div>
         <p className="mt-2 text-sm font-normal leading-5 text-[#8b6d66]">
-          Escolha uma foto quadrada de 800 × 800 px para obter melhor resolução.
+          Para melhor definição, envie uma imagem quadrada de 800 × 800 px.
         </p>
 
         <button
@@ -4195,7 +4816,13 @@ function AdminLogoDialog({ logo, onCancel, onSave }) {
           onClick={() => inputRef.current?.click()}
           className="mt-5 block w-full rounded-xl border border-dashed border-[#b7928b] bg-[#faf8f7] p-5 text-center"
         >
-          <img src={preview} alt="Prévia da logo" className="mx-auto size-[160px] rounded-full bg-[#4b160e] object-cover" draggable="false" />
+          <img
+            src={preview}
+            alt="Prévia da logo"
+            className="mx-auto size-[160px] rounded-full border-[3px] bg-[#4b160e] object-cover"
+            style={{ borderColor: detectedTheme?.primary ?? 'var(--brand-primary)' }}
+            draggable="false"
+          />
           <span className="mt-4 inline-flex h-10 items-center gap-2 rounded-full bg-[#4b160e] px-5 text-sm font-medium text-white">
             <Camera size={17} />
             Escolher foto
@@ -4241,12 +4868,33 @@ function AdminLogoDialog({ logo, onCancel, onSave }) {
           </button>
         </div>
       </section>
+      {cropSource && (
+        <AdminImageCropDialog
+          source={cropSource}
+          title="Ajustar logo"
+          description="Mova e amplie a imagem para posicionar a logo dentro do círculo."
+          confirmLabel="Usar logo"
+          outputWidth={800}
+          outputHeight={800}
+          circular
+          quality={0.9}
+          onCancel={() => setCropSource('')}
+          onConfirm={async (imageUrl) => {
+            setCropSource('')
+            setAnalyzing(true)
+            setPreview(imageUrl)
+            setDetectedTheme(await extractLogoTheme(imageUrl))
+            setAnalyzing(false)
+          }}
+        />
+      )}
     </div>
   )
 }
 
 function AdminRestaurantProfileDialog({ profile, onCancel, onSave }) {
   const [draft, setDraft] = useState(() => normalizeRestaurantProfile(profile))
+  const [cropRequest, setCropRequest] = useState(null)
   const coverInputRef = useRef(null)
   const logoInputRef = useRef(null)
   const draftTheme = normalizeRestaurantProfile(draft).theme
@@ -4268,18 +4916,11 @@ function AdminRestaurantProfileDialog({ profile, onCancel, onSave }) {
 
   function updateImage(field, event) {
     const file = event.target.files?.[0]
+    if (!file) return
 
-    readAdminImageFile(file, async (imageUrl) => {
-      if (field !== 'logo') {
-        updateField(field, imageUrl)
-        return
-      }
-
-      const theme = await extractLogoTheme(imageUrl)
-      setDraft((current) => ({ ...current, logo: imageUrl, theme }))
-    }, field === 'logo'
-      ? { maxWidth: 640, maxHeight: 640, quality: 0.8 }
-      : { maxWidth: 1200, maxHeight: 480, quality: 0.78 })
+    const reader = new FileReader()
+    reader.onload = () => setCropRequest({ field, source: String(reader.result || '') })
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
@@ -4308,14 +4949,14 @@ function AdminRestaurantProfileDialog({ profile, onCancel, onSave }) {
 
         <div className="mt-5">
           <div className="relative overflow-hidden rounded-xl bg-[var(--brand-primary)]">
-            <img src={draft.cover} alt="" className="h-[132px] w-full object-cover" draggable="false" />
+            <img src={draft.cover} alt="" className="pointer-events-none h-[132px] w-full select-none object-cover" draggable="false" />
             <button
               type="button"
               onClick={() => coverInputRef.current?.click()}
-              className="absolute bottom-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-white/95 px-3 text-xs font-bold text-[#6b433a] shadow"
+              className="absolute bottom-3 right-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-full bg-white/95 px-3 text-xs font-bold text-[#6b433a] shadow"
             >
-              <Camera size={15} />
-              Trocar capa
+              <Camera className="pointer-events-none" size={15} />
+              <span className="pointer-events-none">Trocar capa</span>
             </button>
             <input
               ref={coverInputRef}
@@ -4331,7 +4972,7 @@ function AdminRestaurantProfileDialog({ profile, onCancel, onSave }) {
               <img
                 src={draft.logo}
                 alt=""
-                className="size-[88px] rounded-full border-[3px] border-[var(--brand-accent)] bg-[var(--brand-primary)] object-cover"
+                className="brand-logo-frame size-[88px] rounded-full bg-[var(--brand-primary)] object-cover"
                 draggable="false"
               />
               <button
@@ -4434,39 +5075,71 @@ function AdminRestaurantProfileDialog({ profile, onCancel, onSave }) {
           </button>
         </div>
       </section>
+      {cropRequest && (
+        <AdminImageCropDialog
+          source={cropRequest.source}
+          title={cropRequest.field === 'logo' ? 'Ajustar logo' : 'Ajustar capa'}
+          description={cropRequest.field === 'logo'
+            ? 'Mova e amplie a imagem para posicionar a logo dentro do círculo.'
+            : 'Arraste a imagem e ajuste o zoom. A área destacada será usada como capa.'}
+          confirmLabel={cropRequest.field === 'logo' ? 'Usar logo' : 'Usar capa'}
+          aspectRatio={cropRequest.field === 'logo' ? 1 : 3}
+          outputWidth={cropRequest.field === 'logo' ? 800 : 1200}
+          outputHeight={cropRequest.field === 'logo' ? 800 : 400}
+          circular={cropRequest.field === 'logo'}
+          quality={cropRequest.field === 'logo' ? 0.9 : 0.82}
+          onCancel={() => setCropRequest(null)}
+          onConfirm={async (imageUrl) => {
+            const field = cropRequest.field
+            setCropRequest(null)
+            if (field === 'logo') {
+              const theme = await extractLogoTheme(imageUrl)
+              setDraft((current) => ({ ...current, logo: imageUrl, theme }))
+              return
+            }
+            updateField(field, imageUrl)
+          }}
+        />
+      )}
     </div>
   )
 }
 
-function AdminExitConfirmDialog({ onCancel, onDiscard, onSave }) {
+function AdminExitConfirmDialog({ hasChanges, onCancel, onDiscard, onSave }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/76 px-7 backdrop-blur-[2px] md:absolute">
-      <section className="w-full rounded-[22px] border border-[#4b160e] bg-white px-6 py-6 text-center shadow-2xl shadow-[#4b160e]/15">
-        <h2 className="text-xl font-black leading-7 text-[#5a2a22]">Salvar alterações antes de sair?</h2>
-        <p className="mt-2 text-sm font-semibold leading-5 text-[#8b6d66]">
-          Você pode publicar as mudanças agora ou voltar ao cardápio sem aplicar.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 px-5 backdrop-blur-[2px] md:absolute">
+      <section className={`w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl shadow-slate-950/15 ${hasChanges ? 'text-center' : 'text-left'}`}>
+        <h2 className="text-[17px] font-semibold leading-6 text-slate-900">
+          {hasChanges ? 'Salvar alterações antes de sair?' : 'Deseja realmente sair da conta?'}
+        </h2>
+        <p className="mt-1.5 text-[13px] font-normal leading-5 text-slate-500">
+          {hasChanges
+            ? 'Foram encontradas alterações ainda não publicadas.'
+            : 'Nenhuma alteração foi realizada nesta sessão.'}
         </p>
-        <div className="mt-6 space-y-2">
-          <button
-            type="button"
-            onClick={onSave}
-            className="h-11 w-full rounded-full bg-[#4b160e] text-sm font-black uppercase tracking-wide text-white"
-          >
-            Salvar e sair
-          </button>
+        <div className="mt-5 space-y-2">
+          {hasChanges && (
+            <button
+              type="button"
+              onClick={onSave}
+              className="h-10 w-full rounded-xl bg-[var(--brand-primary)] text-[13px] font-semibold text-white transition active:scale-[0.99]"
+            >
+              Salvar e sair
+            </button>
+          )}
           <button
             type="button"
             onClick={onDiscard}
-            className="h-10 w-full rounded-full border border-[#4b160e] bg-white text-sm font-black uppercase tracking-wide text-[#4b160e]"
+            className={`${hasChanges ? 'border border-slate-200 bg-white text-slate-700' : 'bg-[var(--brand-primary)] text-white'} h-10 w-full rounded-xl text-[13px] font-semibold transition active:scale-[0.99]`}
           >
-            Descartar
+            {hasChanges ? 'Sair sem salvar' : 'Confirmar saída'}
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="h-10 w-full rounded-full bg-slate-100 text-sm font-black uppercase tracking-wide text-slate-600"
+            className="h-9 w-full rounded-xl bg-transparent text-[13px] font-medium text-slate-500 transition hover:bg-slate-50 active:scale-[0.99]"
           >
-            Continuar editando
+            {hasChanges ? 'Continuar editando' : 'Cancelar'}
           </button>
         </div>
       </section>
@@ -4476,23 +5149,23 @@ function AdminExitConfirmDialog({ onCancel, onDiscard, onSave }) {
 
 function AdminActionStack({ disabled = false, onEdit, onRemove }) {
   return (
-    <div className="grid content-center gap-2">
+    <div className="grid content-center gap-1.5">
       <button
         type="button"
         onClick={onRemove}
         disabled={disabled}
-        className="flex h-10 items-center justify-center gap-1.5 rounded-lg bg-slate-200 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-70"
+        className="flex h-8 items-center justify-center gap-1 rounded-md bg-slate-200 text-[9px] font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-70"
       >
-        <Trash2 size={16} className="text-red-600" />
+        <Trash2 size={12} className="text-red-600" />
         Excluir
       </button>
       <button
         type="button"
         onClick={onEdit}
         disabled={disabled}
-        className="flex h-10 items-center justify-center gap-1.5 rounded-lg bg-slate-200 text-xs font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-70"
+        className="flex h-8 items-center justify-center gap-1 rounded-md bg-slate-200 text-[9px] font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-70"
       >
-        <Pencil size={16} />
+        <Pencil size={12} />
         Editar
       </button>
     </div>
@@ -4565,23 +5238,26 @@ function AdminProductEditorCard({ product, onEdit, onRemove, onToggle }) {
   )
 }
 
-function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaultRestaurantProfile, onBack, onSave }) {
+function AdminPromoEditScreen({ promo, products = [], onBack, onSave }) {
   const [draft, setDraft] = useState(() => ({
     ...promo,
     alt: promo?.alt ?? 'Card promocional',
     targetType: promo?.targetType ?? 'promotion',
     targetUrl: promo?.targetUrl ?? '',
+    requirements: promo?.requirements ?? (promo?.conditions ?? []).join('\n'),
   }))
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false)
+  const [imageCropSource, setImageCropSource] = useState('')
   const imageInputRef = useRef(null)
   const selectableProducts = products
 
   function updatePromoImage(event) {
     const file = event.target.files?.[0]
+    if (!file) return
 
-    readAdminImageFile(file, (imageUrl) => {
-      setDraft((current) => ({ ...current, image: imageUrl, fit: 'contain' }))
-    }, { maxWidth: 960, maxHeight: 540, quality: 0.72 })
+    const reader = new FileReader()
+    reader.onload = () => setImageCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
@@ -4595,21 +5271,34 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
   }
 
   return (
-    <section className="relative h-full overflow-y-auto overflow-x-hidden bg-white pb-3 text-[#4b160e]">
-      <TopPhotoBar backgroundImage={restaurantProfile.cover} onBack={onBack} onOpenSettings={onBack} compact />
+    <section className="relative flex h-full flex-col overflow-hidden bg-[#f8f8f7] text-[#4b160e]">
+      <header className="z-20 flex h-16 shrink-0 items-center border-b border-black/[0.06] bg-white/95 px-5 backdrop-blur">
+        <button
+          type="button"
+          onClick={onBack}
+          className="grid size-9 place-items-center rounded-full text-[#4b160e] transition hover:bg-black/[0.04] active:scale-95"
+          aria-label="Voltar"
+        >
+          <ArrowLeft size={21} strokeWidth={2} />
+        </button>
+        <div className="ml-3 min-w-0">
+          <h1 className="text-[16px] font-bold leading-tight text-[#2f211e]">Editar promoção</h1>
+          <p className="mt-0.5 text-[11px] font-medium text-[#8d817d]">Imagem, nome e destino do card</p>
+        </div>
+      </header>
 
-      <div className="relative z-10 -mt-[84px] min-h-[calc(100%-60px)] rounded-t-[20px] bg-white px-7 pb-4 pt-5 shadow-[0_-10px_28px_rgba(67,22,15,0.08)]">
-        <div className="relative overflow-hidden rounded-[8px] bg-[#4b160e]">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-28 pt-5">
+        <div className="relative overflow-hidden rounded-2xl bg-[#391712] shadow-[0_8px_24px_rgba(55,24,18,0.12)]">
           <img
             src={draft.image}
             alt=""
-            className="h-[178px] w-full object-contain"
+            className="aspect-[158/43] w-full object-cover"
             draggable="false"
           />
           <button
             type="button"
             onClick={() => imageInputRef.current?.click()}
-            className="absolute bottom-3 right-3 inline-flex h-8 items-center gap-1.5 rounded-full bg-white/95 px-3 text-xs font-bold text-[#8f746d] shadow"
+            className="absolute bottom-3 right-3 inline-flex h-9 items-center gap-1.5 rounded-full bg-white px-3.5 text-[12px] font-semibold text-[#4b302a] shadow-md transition active:scale-95"
           >
             <Camera size={15} />
             Trocar foto
@@ -4623,18 +5312,24 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
           />
         </div>
 
-        <label className="mt-4 block text-sm font-black text-[#6b433a]">
+        <div className="mt-3 flex items-center justify-between gap-3 px-1 text-[11px] font-medium text-[#8d817d]">
+          <span>Medida ideal: 1264 × 344 px</span>
+          <span>Proporção 3,67:1</span>
+        </div>
+
+        <label className="mt-6 block text-[12px] font-semibold text-[#625652]">
           Nome do card
           <input
             value={draft.alt}
             onChange={(event) => setDraft((current) => ({ ...current, alt: event.target.value }))}
-            className="mt-1 h-10 w-full rounded-lg border border-[#b7928b] px-3 text-sm font-semibold text-[#4b160e] outline-none"
+            className="mt-2 h-12 w-full rounded-xl border border-black/[0.08] bg-white px-4 text-[14px] font-medium text-[#352623] shadow-sm outline-none transition focus:border-[#4b160e]/35 focus:ring-4 focus:ring-[#4b160e]/[0.06]"
           />
         </label>
 
-        <section className="mt-4 rounded-xl border border-[#eadfd9] bg-[#fbf7f2] p-3">
-          <h2 className="text-sm font-black text-[#6b433a]">Direcionamento do clique</h2>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+        <section className="mt-6">
+          <h2 className="text-[13px] font-bold text-[#352623]">Direcionamento do clique</h2>
+          <p className="mt-1 text-[11px] font-medium text-[#918681]">Escolha o que o cliente verá em seguida.</p>
+          <div className="mt-3 grid grid-cols-3 rounded-xl bg-[#eceae8] p-1">
             {[
               ['promotion', 'Promoção'],
               ['product', 'Prato'],
@@ -4645,10 +5340,10 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
                 key={targetType}
                 onClick={() => updateDestinationType(targetType)}
                 aria-pressed={draft.targetType === targetType}
-                className={`h-9 rounded-lg text-[11px] font-black transition active:scale-[0.98] ${
+                className={`h-9 rounded-lg text-[11px] font-semibold transition active:scale-[0.98] ${
                   draft.targetType === targetType
-                    ? 'bg-[#4b160e] text-white'
-                    : 'bg-white text-[#6b433a] ring-1 ring-[#eadfd9]'
+                    ? 'bg-white text-[#352623] shadow-sm'
+                    : 'text-[#807571]'
                 }`}
               >
                 {label}
@@ -4657,18 +5352,38 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
           </div>
 
           {draft.targetType === 'promotion' && (
-            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-semibold leading-5 text-[#8b6d66] ring-1 ring-[#eadfd9]">
-              Ao clicar, o cliente verá a tela explicando a promoção, condições e itens inclusos.
-            </p>
+            <div className="mt-3 space-y-4">
+              <p className="rounded-xl border border-black/[0.06] bg-white px-4 py-3 text-[12px] font-medium leading-5 text-[#786d69] shadow-sm">
+                Ao clicar, o cliente verá a tela explicando a promoção, condições e itens inclusos.
+              </p>
+              <label className="block text-[12px] font-semibold text-[#625652]">
+                Requisitos para a compra <span className="font-medium text-[#9b918d]">(opcional)</span>
+                <textarea
+                  value={draft.requirements}
+                  onChange={(event) => {
+                    const requirements = event.target.value
+                    const conditions = requirements
+                      .split('\n')
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+                    setDraft((current) => ({ ...current, requirements, conditions }))
+                  }}
+                  rows={4}
+                  placeholder={'Ex.: Válido somente de segunda a quinta\nNão cumulativo com outras ofertas'}
+                  className="mt-2 min-h-[112px] w-full resize-y rounded-xl border border-black/[0.08] bg-white px-4 py-3 text-[14px] font-medium leading-5 text-[#352623] shadow-sm outline-none placeholder:text-[#aaa19e] focus:border-[#4b160e]/35 focus:ring-4 focus:ring-[#4b160e]/[0.06]"
+                />
+                <span className="mt-1.5 block text-[10px] font-medium text-[#9b918d]">Digite um requisito por linha.</span>
+              </label>
+            </div>
           )}
 
           {draft.targetType === 'product' && (
-            <label className="mt-3 block text-xs font-black uppercase text-[#6b433a]">
+            <label className="mt-4 block text-[12px] font-semibold text-[#625652]">
               Prato de destino
               <select
                 value={draft.productId ?? ''}
                 onChange={(event) => setDraft((current) => ({ ...current, productId: event.target.value }))}
-                className="mt-1 h-10 w-full rounded-lg border border-[#b7928b] bg-white px-3 text-sm font-semibold normal-case text-[#4b160e] outline-none"
+                className="mt-2 h-12 w-full rounded-xl border border-black/[0.08] bg-white px-4 text-[14px] font-medium text-[#352623] shadow-sm outline-none focus:border-[#4b160e]/35 focus:ring-4 focus:ring-[#4b160e]/[0.06]"
               >
                 {selectableProducts.map((product) => (
                   <option key={product.id} value={product.id}>
@@ -4680,14 +5395,14 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
           )}
 
           {draft.targetType === 'link' && (
-            <label className="mt-3 block text-xs font-black uppercase text-[#6b433a]">
+            <label className="mt-4 block text-[12px] font-semibold text-[#625652]">
               Link externo
               <input
                 type="url"
                 value={draft.targetUrl}
                 onChange={(event) => setDraft((current) => ({ ...current, targetUrl: event.target.value }))}
                 placeholder="https://..."
-                className="mt-1 h-10 w-full rounded-lg border border-[#b7928b] px-3 text-sm font-semibold normal-case text-[#4b160e] outline-none placeholder:text-[#b6a4a0]"
+                className="mt-2 h-12 w-full rounded-xl border border-black/[0.08] bg-white px-4 text-[14px] font-medium text-[#352623] shadow-sm outline-none placeholder:text-[#aaa19e] focus:border-[#4b160e]/35 focus:ring-4 focus:ring-[#4b160e]/[0.06]"
               />
             </label>
           )}
@@ -4696,14 +5411,34 @@ function AdminPromoEditScreen({ promo, products = [], restaurantProfile = defaul
         <button
           type="button"
           onClick={() => setSaveConfirmOpen(true)}
-          className="mx-auto mt-6 flex h-10 w-[90%] items-center justify-center rounded-full bg-[#4b160e] text-base font-semibold text-white"
+          className="absolute inset-x-5 bottom-[max(16px,env(safe-area-inset-bottom))] z-20 flex h-12 items-center justify-center rounded-xl bg-[#4b160e] text-[14px] font-semibold text-white shadow-[0_8px_20px_rgba(75,22,14,0.2)] transition active:scale-[0.99]"
         >
           Salvar alterações
         </button>
       </div>
 
+      {imageCropSource && (
+        <AdminImageCropDialog
+          source={imageCropSource}
+          title="Ajustar imagem promocional"
+          description="A área destacada corresponde ao card de 316 × 86 px. Use uma imagem de 1264 × 344 px para maior qualidade."
+          confirmLabel="Usar imagem"
+          aspectRatio={promoCardAspectRatio}
+          workspaceAspectRatio={4 / 3}
+          outputWidth={1264}
+          outputHeight={344}
+          quality={0.9}
+          onCancel={() => setImageCropSource('')}
+          onConfirm={(imageUrl) => {
+            setDraft((current) => ({ ...current, image: imageUrl, fit: 'cover' }))
+            setImageCropSource('')
+          }}
+        />
+      )}
+
       {saveConfirmOpen && (
         <AdminConfirmDialog
+          centerText
           title="Você tem certeza que deseja salvar as alterações?"
           confirmLabel="Salvar"
           onCancel={() => setSaveConfirmOpen(false)}
@@ -4720,6 +5455,7 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false)
   const [deleteOptionId, setDeleteOptionId] = useState('')
   const [optionDraft, setOptionDraft] = useState(null)
+  const [imageCropSource, setImageCropSource] = useState('')
   const imageInputRef = useRef(null)
   const previewImage = draft.image || fallbackImages[draft.category] || categoriaFrutosDoMar
 
@@ -4729,12 +5465,11 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
 
   function updateProductImage(event) {
     const file = event.target.files?.[0]
+    if (!file) return
 
-    readAdminImageFile(
-      file,
-      (imageUrl) => updateDraftField('image', imageUrl),
-      { maxWidth: 720, maxHeight: 720, quality: 0.7 },
-    )
+    const reader = new FileReader()
+    reader.onload = () => setImageCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
@@ -4827,6 +5562,9 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
             onChange={updateProductImage}
           />
         </div>
+        <p className="mt-1.5 text-[10px] font-normal leading-4 text-[#8f746d]">
+          Para melhor definição, envie uma imagem quadrada de 480 × 480 px.
+        </p>
 
         <label className="mt-2.5 block text-[13px] font-bold text-[#6b433a]">
           Nome do prato
@@ -4918,15 +5656,15 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
         <button
           type="button"
           onClick={startOption}
-          className="mx-auto mt-3.5 flex h-9 w-[94%] items-center justify-center gap-2 rounded-full bg-[#4b160e] text-[15px] font-medium text-white"
+          className="mx-auto mt-3.5 flex h-9 w-[94%] items-center justify-center gap-2 rounded-full border border-[var(--brand-primary)] bg-white text-[15px] font-medium text-[var(--brand-primary)]"
         >
           Adicionar
-          <Plus size={16} fill="white" />
+          <Plus size={16} />
         </button>
         <button
           type="button"
           onClick={() => setSaveConfirmOpen(true)}
-          className="mx-auto mt-2 flex h-9 w-[94%] items-center justify-center rounded-full border border-[#4b160e] bg-white text-[15px] font-medium text-[#4b160e]"
+          className="mx-auto mt-2 flex h-9 w-[94%] items-center justify-center rounded-full bg-[var(--brand-primary)] text-[15px] font-medium text-white shadow-sm"
         >
           Salvar alterações
         </button>
@@ -4939,6 +5677,22 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
           onToggle={toggleTag}
         />
       )}
+      {imageCropSource && (
+        <AdminImageCropDialog
+          source={imageCropSource}
+          title="Ajustar foto do prato"
+          description="Arraste a foto e ajuste o zoom para centralizar o prato."
+          confirmLabel="Usar foto"
+          outputWidth={480}
+          outputHeight={480}
+          quality={0.82}
+          onCancel={() => setImageCropSource('')}
+          onConfirm={(imageUrl) => {
+            updateDraftField('image', imageUrl)
+            setImageCropSource('')
+          }}
+        />
+      )}
       {deleteOptionId && (
         <AdminConfirmDialog
           title="Você tem certeza que deseja excluir?"
@@ -4949,6 +5703,7 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
       )}
       {saveConfirmOpen && (
         <AdminConfirmDialog
+          centerText
           title="Você tem certeza que deseja salvar as alterações?"
           confirmLabel="Salvar"
           onCancel={() => setSaveConfirmOpen(false)}
@@ -4961,28 +5716,28 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
 
 function AdminCategoryEditScreen({ category, restaurantProfile = defaultRestaurantProfile, onBack, onSave }) {
   const [draft, setDraft] = useState(() => ({ ...category }))
+  const [iconCropSource, setIconCropSource] = useState('')
+  const [imageCropSource, setImageCropSource] = useState('')
   const imageInputRef = useRef(null)
   const iconInputRef = useRef(null)
 
   function updateCategoryImage(event) {
     const file = event.target.files?.[0]
+    if (!file) return
 
-    readAdminImageFile(
-      file,
-      (imageUrl) => setDraft((current) => ({ ...current, image: imageUrl })),
-      { maxWidth: 900, maxHeight: 620, quality: 0.76 },
-    )
+    const reader = new FileReader()
+    reader.onload = () => setImageCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
   function updateCategoryIcon(event) {
     const file = event.target.files?.[0]
+    if (!file) return
 
-    readAdminImageFile(
-      file,
-      (iconImage) => setDraft((current) => ({ ...current, iconImage })),
-      { maxWidth: 360, maxHeight: 360, quality: 0.82 },
-    )
+    const reader = new FileReader()
+    reader.onload = () => setIconCropSource(String(reader.result || ''))
+    reader.readAsDataURL(file)
     event.target.value = ''
   }
 
@@ -5005,46 +5760,35 @@ function AdminCategoryEditScreen({ category, restaurantProfile = defaultRestaura
         <h1 data-screen-title="true" tabIndex={-1} className="font-montserrat text-center text-[18px] font-medium outline-none">
           EDITAR CATEGORIA
         </h1>
-        <p className="mt-2 text-center text-xs leading-5 text-[#8f746d]">
-          Altere o nome, a foto e o ícone exibidos no cardápio.
-        </p>
-
-        <div className="relative mt-6 overflow-hidden rounded-xl border-[3px] border-[var(--brand-primary)] bg-slate-100">
-          <img src={draft.image} alt={`Imagem de ${draft.label}`} className="aspect-[1.47] w-full object-cover" draggable="false" />
-          <button
-            type="button"
-            onClick={() => imageInputRef.current?.click()}
-            className="absolute bottom-3 right-3 inline-flex h-9 items-center gap-2 rounded-full bg-white px-4 text-xs font-semibold text-[var(--brand-primary)] shadow-md"
-          >
-            <Camera size={16} />
-            Trocar imagem
-          </button>
+        <label className="mt-7 block text-sm font-medium text-[#6b433a]">
+          Nome
           <input
-            ref={imageInputRef}
-            type="file"
-            accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-            className="sr-only"
-            onChange={updateCategoryImage}
+            type="text"
+            required
+            maxLength={40}
+            value={draft.label}
+            onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
+            className="mt-2 h-12 w-full rounded-xl border border-[#c9aaa3] bg-white px-4 text-base text-[#43160f] outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[color:var(--brand-primary)]/15"
+            placeholder="Ex.: Entradas"
           />
-        </div>
-        <p className="mt-2 text-center text-[11px] text-[#9a7d76]">Use JPG ou PNG, preferencialmente na proporção 900 × 620.</p>
+        </label>
 
-        <div className="mt-6 rounded-2xl border border-[#dcc7c2] bg-[#fbf8f7] p-4">
-          <p className="text-sm font-medium text-[#6b433a]">Ícone da categoria</p>
+        <div className="mt-6">
+          <p className="text-sm font-medium text-[#6b433a]">Ícone</p>
           <div className="mt-3 flex items-center gap-4">
-            <div className="grid size-24 shrink-0 place-items-center rounded-full bg-white shadow-sm">
-              <img src={draft.iconImage} alt={`Ícone de ${draft.label}`} className="size-20 object-contain" draggable="false" />
+            <div className="grid size-24 shrink-0 place-items-center overflow-hidden rounded-full border border-[#dcc7c2] bg-white shadow-sm">
+              <img src={draft.iconImage} alt={`Ícone de ${draft.label}`} className="size-full object-contain" draggable="false" />
             </div>
             <div className="min-w-0 flex-1">
               <button
                 type="button"
                 onClick={() => iconInputRef.current?.click()}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-full border border-[var(--brand-primary)] bg-white px-3 text-xs font-semibold text-[var(--brand-primary)]"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[var(--brand-primary)] bg-white px-3 text-xs font-semibold text-[var(--brand-primary)]"
               >
                 <Camera size={16} />
                 Trocar ícone
               </button>
-              <p className="mt-2 text-[10px] leading-4 text-[#9a7d76]">Prefira PNG quadrado, 360 × 360, com fundo transparente.</p>
+              <p className="mt-2 text-center text-[11px] leading-4 text-[#9a7d76]">Proporção: 360 × 360 px</p>
             </div>
           </div>
           <input
@@ -5056,18 +5800,62 @@ function AdminCategoryEditScreen({ category, restaurantProfile = defaultRestaura
           />
         </div>
 
-        <label className="mt-6 block text-sm font-medium text-[#6b433a]">
-          Nome da categoria
-          <input
-            type="text"
-            required
-            maxLength={40}
-            value={draft.label}
-            onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
-            className="mt-2 h-12 w-full rounded-xl border border-[#c9aaa3] bg-white px-4 text-base text-[#43160f] outline-none transition focus:border-[var(--brand-primary)] focus:ring-2 focus:ring-[color:var(--brand-primary)]/15"
-            placeholder="Ex.: Entradas"
+        <div className="mt-6">
+          <p className="text-sm font-medium text-[#6b433a]">Imagem</p>
+          <div className="relative mt-3 overflow-hidden rounded-xl border border-[#dcc7c2] bg-slate-100">
+            <img src={draft.image} alt={`Imagem de ${draft.label}`} className="aspect-[1.4516] w-full object-cover" draggable="false" />
+            <button
+              type="button"
+              onClick={() => imageInputRef.current?.click()}
+              className="absolute bottom-3 right-3 inline-flex h-10 items-center gap-2 rounded-xl border border-[var(--brand-primary)] bg-white px-4 text-xs font-semibold text-[var(--brand-primary)] shadow-md"
+            >
+              <Camera size={16} />
+              Trocar imagem
+            </button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+              className="sr-only"
+              onChange={updateCategoryImage}
+            />
+          </div>
+          <p className="mt-2 text-center text-[11px] text-[#9a7d76]">Proporção: 900 × 620 px</p>
+        </div>
+
+        {iconCropSource && (
+          <AdminImageCropDialog
+            source={iconCropSource}
+            title="Recortar ícone"
+            description="Arraste a imagem e ajuste o zoom para preencher o círculo."
+            confirmLabel="Usar ícone"
+            circular
+            quality={0.9}
+            onCancel={() => setIconCropSource('')}
+            onConfirm={(iconImage) => {
+              setDraft((current) => ({ ...current, iconImage }))
+              setIconCropSource('')
+            }}
           />
-        </label>
+        )}
+
+        {imageCropSource && (
+          <AdminImageCropDialog
+            source={imageCropSource}
+            title="Ajustar imagem da categoria"
+            description="Ajuste a posição, o zoom, a rotação e o espelhamento antes de confirmar."
+            confirmLabel="Usar imagem"
+            aspectRatio={900 / 620}
+            outputWidth={900}
+            outputHeight={620}
+            quality={0.82}
+            onCancel={() => setImageCropSource('')}
+            onConfirm={(imageUrl) => {
+              setDraft((current) => ({ ...current, image: imageUrl }))
+              setImageCropSource('')
+            }}
+          />
+        )}
 
         <button type="submit" className="mt-8 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[var(--brand-primary)] text-sm font-semibold text-white shadow-sm">
           <Save size={17} />
@@ -5084,7 +5872,9 @@ function AdminCategoriesEditorScreen({
   onAddCategory,
   onBack,
   onEditCategory,
+  onOpenCategory,
   onRemoveCategory,
+  selectionMode = '',
 }) {
   return (
     <section className="relative h-full overflow-y-auto bg-white pb-8 text-[#43160f]">
@@ -5095,18 +5885,18 @@ function AdminCategoriesEditorScreen({
           alt={restaurantProfile.name}
           loading="eager"
           decoding="sync"
-          className="absolute left-1/2 top-[-70px] z-20 size-[96px] -translate-x-1/2 rounded-full bg-[#4a160f]"
+          className="brand-logo-frame absolute left-1/2 top-[-70px] z-20 size-[96px] -translate-x-1/2 rounded-full bg-[#4a160f] object-cover"
           draggable="false"
         />
         <h1 data-screen-title="true" tabIndex={-1} className="font-montserrat text-center text-[17px] font-medium leading-none outline-none">
-          CATEGORIAS
+          {selectionMode ? 'SELECIONE UMA CATEGORIA' : 'CATEGORIAS'}
         </h1>
         <div className="mt-6 grid grid-cols-2 gap-x-2 gap-y-2">
           {categories.map((category) => (
             <div key={category.id} className="relative text-center">
               <button
                 type="button"
-                onClick={() => onEditCategory(category)}
+                onClick={() => onOpenCategory(category)}
                 className="block w-full text-center transition active:scale-[0.99]"
               >
                 <span className="relative block">
@@ -5131,7 +5921,7 @@ function AdminCategoriesEditorScreen({
                   {category.label.toUpperCase()}
                 </span>
               </button>
-              <div className="absolute right-2 top-2 z-20 flex items-center gap-0.5">
+              {!selectionMode && <div className="absolute right-2 top-2 z-20 flex items-center gap-0.5">
                 <button
                   type="button"
                   onClick={() => onEditCategory(category)}
@@ -5148,19 +5938,19 @@ function AdminCategoriesEditorScreen({
                 >
                   <Trash2 size={14} className="text-red-600" />
                 </button>
-              </div>
+              </div>}
             </div>
           ))}
         </div>
       </div>
-      <button
+      {!selectionMode && <button
         type="button"
         onClick={onAddCategory}
         aria-label="Adicionar categoria"
         className="sticky bottom-4 z-30 ml-auto mr-4 grid size-12 place-items-center rounded-full bg-[#4b160e] text-[#d8ad61] shadow-lg"
       >
         <Plus size={23} />
-      </button>
+      </button>}
     </section>
   )
 }
@@ -5173,27 +5963,44 @@ function AdminCategoryProductsEditorScreen({
   onBack,
   onEditProduct,
   onRemoveProduct,
+  onToggleProduct,
+  selectionMode = '',
+  onSelectProduct,
 }) {
   const groupedProducts = groupProductsByMenuSection(products, category)
 
   return (
-    <section className="relative h-full overflow-y-auto bg-white pb-8 text-[#43160f]" aria-labelledby="admin-category-products-title">
+    <section className="relative h-full overflow-y-auto bg-[#faf9f8] pb-8 text-[#43160f]" aria-labelledby="admin-category-products-title">
       <TopPhotoBar backgroundImage={restaurantProfile.cover} onBack={onBack} onOpenSettings={onBack} compact />
-      <div className="relative z-10 -mt-8 rounded-t-[34px] bg-white px-4 pb-8 pt-[60px] shadow-[0_-14px_34px_rgba(67,22,15,0.10)]">
-        <div className="absolute left-1/2 top-[-68px] grid size-[92px] -translate-x-1/2 place-items-center">
-          <img src={category.iconImage} alt="" className="block size-[92px] object-contain" draggable="false" />
+      <div className="relative z-10 -mt-8 min-h-[calc(100%-100px)] rounded-t-[34px] bg-[#faf9f8] px-4 pb-8 pt-[62px] shadow-[0_-10px_28px_rgba(67,22,15,0.07)]">
+        <div className="absolute left-1/2 top-[-62px] grid size-[88px] -translate-x-1/2 place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_6px_18px_rgba(67,22,15,0.12)]">
+          <img src={category.iconImage} alt="" className="block size-full object-contain" draggable="false" />
         </div>
 
-        <h1 id="admin-category-products-title" data-screen-title="true" tabIndex={-1} className="font-anton -translate-y-7 text-center text-[21px] font-normal tracking-[0.02em] outline-none">
+        <h1 id="admin-category-products-title" data-screen-title="true" tabIndex={-1} className="font-montserrat -translate-y-5 text-center text-[17px] font-semibold tracking-[0.03em] outline-none">
           {category.label.toUpperCase()}
         </h1>
+        <p className="-mt-3 mb-5 text-center text-[11px] text-[#8f746d]">
+          {selectionMode
+            ? `Escolha o prato para ${selectionMode === 'featured' ? 'Destaques' : 'Pratos do dia'}`
+            : `${products.length} ${products.length === 1 ? 'prato cadastrado' : 'pratos cadastrados'}`}
+        </p>
 
-        <div className="-mt-2 space-y-5">
+        {!selectionMode && <button
+          type="button"
+          onClick={onAddProduct}
+          className="mb-6 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand-primary)] text-[13px] font-semibold text-white shadow-[0_5px_14px_rgba(67,22,15,0.15)] transition active:scale-[0.99]"
+        >
+          <Plus size={19} />
+          Adicionar prato nesta categoria
+        </button>}
+
+        <div className="space-y-6">
           {groupedProducts.length ? (
             groupedProducts.map((group) => (
               <section key={group.title}>
                 {normalizeText(group.title) !== normalizeText(category.label) && (
-                  <h2 className="mb-2 min-h-[20px] px-1 text-[17px] font-black">{group.title}</h2>
+                  <h2 className="mb-2.5 min-h-[20px] px-1 text-[13px] font-semibold uppercase tracking-[0.04em] text-[var(--brand-primary)]">{group.title}</h2>
                 )}
                 <div className="space-y-2.5">
                   {group.products.map((product) => (
@@ -5202,47 +6009,42 @@ function AdminCategoryProductsEditorScreen({
                       product={product}
                       onEdit={() => onEditProduct(product)}
                       onRemove={() => onRemoveProduct(product)}
+                      onToggle={() => onToggleProduct(product.id)}
+                      onSelect={selectionMode ? () => onSelectProduct(product) : null}
+                      selectionLabel={selectionMode === 'featured' ? 'Adicionar aos destaques' : 'Adicionar aos pratos do dia'}
                     />
                   ))}
                 </div>
               </section>
             ))
           ) : (
-            <p className="rounded-lg bg-[#f0f0f0] p-4 text-sm font-bold text-[#7d6259]">
+            <p className="rounded-xl border border-dashed border-[var(--brand-primary)] bg-white p-6 text-center text-sm font-medium text-[#7d6259]">
               Nenhum prato cadastrado nesta categoria.
             </p>
           )}
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onAddProduct}
-        aria-label="Adicionar prato"
-        className="sticky bottom-4 z-30 ml-auto mr-4 grid size-12 place-items-center rounded-full bg-[#4b160e] text-[#d8ad61] shadow-lg"
-      >
-        <Plus size={23} />
-      </button>
     </section>
   )
 }
 
-function AdminCategoryProductCard({ product, onEdit, onRemove }) {
+function AdminCategoryProductCard({ product, onEdit, onRemove, onToggle, onSelect, selectionLabel }) {
   return (
-    <article className="grid h-[116px] w-full grid-cols-[1fr_130px] gap-3 overflow-hidden rounded-lg bg-[#f0f0f0] p-3 text-left">
-      <div className="grid min-w-0 grid-rows-[auto_1fr_auto] self-stretch overflow-hidden">
-        <h3 className="truncate text-[13px] font-bold leading-tight" title={product.name}>
-          {product.name.toUpperCase()}
+    <article className="grid min-h-[124px] w-full grid-cols-[1fr_112px] gap-3 overflow-hidden rounded-2xl border border-[var(--brand-primary)] bg-white p-3 text-left shadow-[0_3px_12px_rgba(67,22,15,0.06)]">
+      <div className="flex min-w-0 flex-col py-0.5">
+        <h3 className="line-clamp-2 text-[13px] font-semibold leading-[17px]" title={product.name}>
+          {product.name}
         </h3>
-        <p className="line-clamp-3 max-h-[51px] self-center overflow-hidden text-[12.5px] font-normal leading-[17px]">{product.description}</p>
-        <p className="text-[13px] font-bold">{formatCurrency(product.price)}</p>
+        <p className="mt-1.5 line-clamp-3 flex-1 overflow-hidden text-[11.5px] font-normal leading-[16px] text-[#7d6259]">{product.description}</p>
+        <p className="mt-1.5 text-[13px] font-semibold text-[var(--brand-primary)]">{formatCurrency(product.price)}</p>
       </div>
-      <div className="relative h-[90px] self-center overflow-hidden rounded-lg bg-[#4b160e]">
-        <img src={product.image} alt="" className="block size-full scale-[1.03] object-cover" draggable="false" />
-        <div className="absolute right-1.5 top-1.5 flex gap-1">
+      <div className="relative h-[100px] self-center overflow-hidden rounded-xl bg-slate-100">
+        <img src={product.image} alt="" className="block size-full object-cover" draggable="false" />
+        {!onSelect && <div className="absolute right-1.5 top-1.5 flex gap-1.5">
         <button
           type="button"
           onClick={onEdit}
-          className="grid size-7 place-items-center rounded-full bg-white/95 text-slate-600 shadow-sm"
+          className="grid size-7 place-items-center rounded-full bg-white/95 text-[var(--brand-primary)] shadow-sm ring-1 ring-black/5"
           aria-label={`Editar ${product.name}`}
         >
           <Pencil size={13} strokeWidth={2} />
@@ -5250,12 +6052,30 @@ function AdminCategoryProductCard({ product, onEdit, onRemove }) {
         <button
           type="button"
           onClick={onRemove}
-          className="grid size-7 place-items-center rounded-full bg-white/95 text-slate-600 shadow-sm"
+          className="grid size-7 place-items-center rounded-full bg-white/95 shadow-sm ring-1 ring-black/5"
           aria-label={`Excluir ${product.name}`}
         >
           <Trash2 size={13} strokeWidth={2} className="text-red-600" />
         </button>
-        </div>
+        </div>}
+        {onSelect ? (
+          <button
+            type="button"
+            onClick={onSelect}
+            className="absolute inset-x-1.5 bottom-1.5 min-h-7 rounded-lg bg-white/95 px-2 text-[9px] font-semibold leading-3 text-[var(--brand-primary)] shadow-sm"
+          >
+            {selectionLabel}
+          </button>
+        ) : <button
+          type="button"
+          onClick={onToggle}
+          className={`absolute bottom-1.5 right-1.5 h-6 rounded-full px-2 text-[8px] font-bold shadow-sm ${
+            product.active === false ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
+          }`}
+          aria-label={`${product.active === false ? 'Ativar' : 'Desativar'} ${product.name}`}
+        >
+          {product.active === false ? 'INATIVO' : 'ATIVO'}
+        </button>}
       </div>
     </article>
   )
@@ -5358,25 +6178,28 @@ function AdminAllergenChip({ label, onRemove }) {
   )
 }
 
-function AdminConfirmDialog({ title, confirmLabel, onCancel, onConfirm }) {
+function AdminConfirmDialog({ title, description = '', confirmLabel, onCancel, onConfirm, centerText = false }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/72 px-8 backdrop-blur-[1px] md:absolute">
-      <section className="w-full rounded-2xl border border-[#4b160e] bg-white px-7 py-6 text-center shadow-xl">
-        <h2 className="text-lg font-black leading-7 text-[#6b433a]">{title}</h2>
-        <div className="mt-5 flex justify-center gap-6">
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="h-10 min-w-[112px] rounded bg-[#4b160e] px-5 text-base font-semibold text-white"
-          >
-            {confirmLabel}
-          </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-8 backdrop-blur-[2px] md:absolute">
+      <section role="dialog" aria-modal="true" className={`w-full max-w-[340px] rounded-[20px] border border-slate-200 bg-white p-5 shadow-2xl shadow-black/10 ${centerText ? 'text-center' : ''}`}>
+        <h2 className="text-[16px] font-semibold leading-6 text-[#4b160e]">{title}</h2>
+        {description && (
+          <p className="mt-1.5 text-[13px] font-normal leading-5 text-[#8b6d66]">{description}</p>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-2.5">
           <button
             type="button"
             onClick={onCancel}
-            className="h-10 min-w-[112px] rounded border border-[#4b160e] px-5 text-base font-semibold text-[#4b160e]"
+            className="h-10 rounded-full border border-slate-300 bg-white px-4 text-[13px] font-medium text-[#6b433a] transition active:scale-[0.98]"
           >
-            Cancelar
+            Voltar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="h-10 rounded-full bg-[#4b160e] px-3 text-[12px] font-semibold text-white shadow-sm transition active:scale-[0.98]"
+          >
+            {confirmLabel}
           </button>
         </div>
       </section>
