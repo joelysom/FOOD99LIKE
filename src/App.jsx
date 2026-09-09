@@ -28,6 +28,7 @@ import {
   Plus,
   QrCode,
   ReceiptText,
+  RefreshCw,
   Save,
   Search,
   Settings,
@@ -448,10 +449,12 @@ const appAssetUrlToKey = new Map(
 
 function App() {
   const initialTable = getTableFromUrl()
+  const initialScreen = getInitialScreen()
   const initialMenuSlug = getMenuSlugFromHash() || defaultRestaurantProfile.slug
-  const initialMenuState = normalizeMenuStateSnapshot(readCachedMenuState(restaurantId, initialMenuSlug), initialMenuSlug)
+  const initialCachedMenuState = readCachedMenuState(restaurantId, initialMenuSlug)
+  const initialMenuState = normalizeMenuStateSnapshot(initialCachedMenuState, initialMenuSlug)
   const [analyticsSession] = useState(() => getAnalyticsSession(initialTable))
-  const [screen, setScreen] = useState(() => getInitialScreen())
+  const [screen, setScreen] = useState(() => initialScreen)
   const [menuMode, setMenuMode] = useState('padrao')
   const [activeCategory, setActiveCategory] = useState(() => getCategoryFromHash() || 'frutos-do-mar')
   const [menuCategorySelected, setMenuCategorySelected] = useState(false)
@@ -459,6 +462,12 @@ function App() {
   const [selectedPromoId, setSelectedPromoId] = useState(() => getPromoFromHash())
   const [productReturnScreen, setProductReturnScreen] = useState('menu')
   const [activeMenuSlug, setActiveMenuSlug] = useState(initialMenuSlug)
+  const [menuReloadToken, setMenuReloadToken] = useState(0)
+  const [menuLoadState, setMenuLoadState] = useState(() => ({
+    failed: false,
+    loading: shouldBlockCustomMenuPaint(initialMenuSlug, initialCachedMenuState),
+    slug: initialMenuSlug,
+  }))
   const [restaurantProfile, setRestaurantProfile] = useState(initialMenuState.profile)
   const [activeRestaurantId, setActiveRestaurantId] = useState(restaurantId)
   const [categories, setCategories] = useState(initialMenuState.categories)
@@ -528,6 +537,10 @@ function App() {
     () => buildAnalyticsSummary(analyticsEvents, products, analyticsSession),
     [analyticsEvents, products, analyticsSession],
   )
+  const menuPlaceholderActive =
+    isPublicMenuScreen(screen)
+    && menuLoadState.slug === activeMenuSlug
+    && (menuLoadState.loading || menuLoadState.failed)
 
   const trackEvent = useCallback(
     (eventName, payload = {}) => {
@@ -606,14 +619,28 @@ function App() {
   useEffect(() => {
     let cancelled = false
     const slug = activeMenuSlug || defaultRestaurantProfile.slug
+    const cachedState = readCachedMenuState(restaurantId, slug)
 
     menuStateLoadedRef.current = false
+    setMenuLoadState({
+      failed: false,
+      loading: shouldBlockCustomMenuPaint(slug, cachedState),
+      slug,
+    })
 
     async function hydrateMenuState() {
       const resolvedRestaurantId = await resolveRestaurantId(slug, restaurantId)
       const savedState = await loadMenuState(resolvedRestaurantId, slug)
 
       if (cancelled) return
+
+      if (!savedState && isCustomMenuSlug(slug)) {
+        setActiveRestaurantId(resolvedRestaurantId)
+        analyticsSession.restaurantId = resolvedRestaurantId
+        setCart([])
+        setMenuLoadState({ failed: true, loading: false, slug })
+        return
+      }
 
       const nextState = normalizeMenuStateSnapshot(savedState, slug)
       setActiveRestaurantId(resolvedRestaurantId)
@@ -630,6 +657,7 @@ function App() {
       )
       setCart([])
       menuStateLoadedRef.current = true
+      setMenuLoadState({ failed: false, loading: false, slug })
     }
 
     hydrateMenuState()
@@ -637,7 +665,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [activeMenuSlug])
+  }, [activeMenuSlug, menuReloadToken])
 
   useEffect(() => {
     if (!menuStateLoadedRef.current || !adminSession.isAdmin) return undefined
@@ -669,6 +697,12 @@ function App() {
       setScreen(nextScreen)
 
       if (nextMenuSlug) {
+        const cachedState = readCachedMenuState(restaurantId, nextMenuSlug)
+        setMenuLoadState({
+          failed: false,
+          loading: shouldBlockCustomMenuPaint(nextMenuSlug, cachedState),
+          slug: nextMenuSlug,
+        })
         setActiveMenuSlug(nextMenuSlug)
       }
 
@@ -1347,7 +1381,7 @@ function App() {
 
   return (
     <main
-      aria-label="Cardápio digital Coco Bambu"
+      aria-label={menuPlaceholderActive ? 'Cardapio digital' : `Cardapio digital ${restaurantProfile.name}`}
       className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-950 md:grid md:place-items-center md:px-6 md:py-8"
     >
       <div
@@ -1356,11 +1390,22 @@ function App() {
         }`}
         style={buildThemeStyle(restaurantProfile)}
       >
-        {screen === 'entrada' && (
+        {menuPlaceholderActive && (
+          <MenuLoadingScreen
+            failed={menuLoadState.failed}
+            onRetry={() => {
+              const slug = activeMenuSlug || defaultRestaurantProfile.slug
+              setMenuLoadState({ failed: false, loading: isCustomMenuSlug(slug), slug })
+              setMenuReloadToken((currentToken) => currentToken + 1)
+            }}
+          />
+        )}
+
+        {!menuPlaceholderActive && screen === 'entrada' && (
           <EntryScreen onStart={startMenuMode} />
         )}
 
-        {screen === 'menu' && (
+        {!menuPlaceholderActive && screen === 'menu' && (
           <MenuScreen
             products={menuProducts}
             categories={categories}
@@ -1393,7 +1438,7 @@ function App() {
           />
         )}
 
-        {screen === 'categorias' && (
+        {!menuPlaceholderActive && screen === 'categorias' && (
           <CategoriesScreen
             categories={categories}
             restaurantProfile={restaurantProfile}
@@ -1403,7 +1448,7 @@ function App() {
           />
         )}
 
-        {screen === 'categoria-pratos' && (
+        {!menuPlaceholderActive && screen === 'categoria-pratos' && (
           <CategoryProductsScreen
             category={categories.find((category) => category.id === activeCategory) ?? categories[0]}
             products={menuProducts.filter((product) => product.category === activeCategory)}
@@ -1414,7 +1459,7 @@ function App() {
           />
         )}
 
-        {screen === 'produto' && (
+        {!menuPlaceholderActive && screen === 'produto' && (
           <ProductScreen
             key={selectedProduct.id}
             product={selectedProduct}
@@ -1446,7 +1491,7 @@ function App() {
           />
         )}
 
-        {screen === 'promocao' && (
+        {!menuPlaceholderActive && screen === 'promocao' && (
           <PromotionScreen
             promo={selectedPromo}
             restaurantProfile={restaurantProfile}
@@ -1549,7 +1594,7 @@ function App() {
           />
         )}
 
-        {screen === 'pedido' && (
+        {!menuPlaceholderActive && screen === 'pedido' && (
           <OrderScreen
             cartItems={cartItems}
             cartTotal={cartTotal}
@@ -1575,6 +1620,41 @@ function App() {
         <ToastStack toasts={toasts} onDismiss={removeToast} />
       </div>
     </main>
+  )
+}
+
+function MenuLoadingScreen({ failed = false, onRetry }) {
+  return (
+    <section
+      aria-busy={!failed}
+      className="grid h-full place-items-center bg-white px-8 text-center text-slate-950"
+    >
+      <div className="grid max-w-[280px] justify-items-center gap-5">
+        <div className="grid size-16 place-items-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-200">
+          <ReceiptText size={30} strokeWidth={1.9} />
+        </div>
+        <div>
+          <h1 data-screen-title="true" tabIndex={-1} className="text-xl font-black uppercase outline-none">
+            {failed ? 'Cardapio indisponivel' : 'Carregando cardapio'}
+          </h1>
+          <p className="mt-2 text-sm font-medium leading-6 text-slate-500">
+            {failed
+              ? 'Nao foi possivel carregar este restaurante agora.'
+              : 'Preparando as informacoes do restaurante.'}
+          </p>
+        </div>
+        {failed && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-black text-white transition active:scale-95"
+          >
+            <RefreshCw size={17} strokeWidth={2.5} />
+            Tentar novamente
+          </button>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -6200,6 +6280,18 @@ function getMenuSlugFromHash(hashValue = window.location.hash) {
   if (hash.startsWith('#menu=')) return slugifyMenuName(hash.replace('#menu=', ''))
 
   return ''
+}
+
+function isCustomMenuSlug(slug) {
+  return Boolean(slug) && slug !== defaultRestaurantProfile.slug
+}
+
+function shouldBlockCustomMenuPaint(slug, cachedState) {
+  return isCustomMenuSlug(slug) && !cachedState
+}
+
+function isPublicMenuScreen(screen) {
+  return ['menu', 'categorias', 'categoria-pratos', 'produto', 'promocao', 'pedido'].includes(screen)
 }
 
 function getInitialScreen() {

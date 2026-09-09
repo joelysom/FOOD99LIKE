@@ -6,12 +6,16 @@ const menuStoragePrefix = 'food99like-menu-state'
 export function readCachedMenuState(restaurantId, slug) {
   if (typeof window === 'undefined' || !slug) return null
 
-  try {
-    const rawValue = window.localStorage?.getItem(getMenuStateKey(restaurantId, slug))
-    return rawValue ? JSON.parse(rawValue) : null
-  } catch {
-    return null
+  for (const key of getMenuStateKeys(restaurantId, slug)) {
+    try {
+      const rawValue = window.localStorage?.getItem(key)
+      if (rawValue) return JSON.parse(rawValue)
+    } catch {
+      return null
+    }
   }
+
+  return null
 }
 
 export async function loadMenuState(restaurantId, slug) {
@@ -87,7 +91,10 @@ function cacheMenuState(restaurantId, slug, menuState) {
   if (typeof window === 'undefined') return
 
   try {
-    window.localStorage?.setItem(getMenuStateKey(restaurantId, slug), JSON.stringify(menuState))
+    const serializedState = JSON.stringify(menuState)
+    getMenuStateKeys(restaurantId, slug).forEach((key) => {
+      window.localStorage?.setItem(key, serializedState)
+    })
   } catch (error) {
     if (import.meta.env.DEV) {
       console.warn('Menu state cache failed.', error)
@@ -101,4 +108,15 @@ function getMenuStateRef(restaurantId, slug) {
 
 function getMenuStateKey(restaurantId, slug) {
   return `${menuStoragePrefix}:${restaurantId}:${slug}`
+}
+
+function getMenuStateSlugKey(slug) {
+  return `${menuStoragePrefix}:slug:${slug}`
+}
+
+function getMenuStateKeys(restaurantId, slug) {
+  return [...new Set([
+    restaurantId && slug ? getMenuStateKey(restaurantId, slug) : '',
+    slug ? getMenuStateSlugKey(slug) : '',
+  ].filter(Boolean))]
 }
