@@ -17,6 +17,7 @@ const restaurantName = process.env.FIREBASE_NEW_RESTAURANT_NAME
 const restaurantSlug = process.env.FIREBASE_NEW_RESTAURANT_SLUG
 const adminEmail = process.env.FIREBASE_NEW_ADMIN_EMAIL
 const adminPassword = process.env.FIREBASE_NEW_ADMIN_PASSWORD
+const adminName = process.env.FIREBASE_NEW_ADMIN_NAME || 'Administrador'
 
 if (![ownerEmail, ownerPassword, restaurantName, restaurantSlug, adminEmail, adminPassword].every(Boolean)) {
   throw new Error('Informe as variáveis do proprietário e do novo restaurante.')
@@ -29,14 +30,16 @@ const adminAuth = getAuth(adminApp)
 const db = initializeFirestore(ownerApp, { ignoreUndefinedProperties: true })
 
 try {
-  await signInWithEmailAndPassword(ownerAuth, ownerEmail, ownerPassword)
+  const normalizedAdminEmail = adminEmail.trim().replace(/\\+@/g, '@').toLowerCase()
+
+  await signInWithEmailAndPassword(ownerAuth, ownerEmail.trim().replace(/\\+@/g, '@').toLowerCase(), ownerPassword)
 
   let adminCredential
   try {
-    adminCredential = await createUserWithEmailAndPassword(adminAuth, adminEmail, adminPassword)
+    adminCredential = await createUserWithEmailAndPassword(adminAuth, normalizedAdminEmail, adminPassword)
   } catch (error) {
     if (error?.code !== 'auth/email-already-in-use') throw error
-    adminCredential = await signInWithEmailAndPassword(adminAuth, adminEmail, adminPassword)
+    adminCredential = await signInWithEmailAndPassword(adminAuth, normalizedAdminEmail, adminPassword)
   }
 
   await setDoc(doc(db, 'restaurants', restaurantSlug), {
@@ -48,10 +51,18 @@ try {
   }, { merge: true })
 
   await setDoc(doc(db, 'restaurants', restaurantSlug, 'admins', adminCredential.user.uid), {
-    email: adminEmail,
-    username: 'Administrador',
+    email: normalizedAdminEmail,
+    username: adminName,
     role: 'owner',
     createdAt: serverTimestamp(),
+  }, { merge: true })
+
+  await setDoc(doc(db, 'adminDirectory', adminCredential.user.uid), {
+    restaurantId: restaurantSlug,
+    email: normalizedAdminEmail,
+    active: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   }, { merge: true })
 
   await setDoc(doc(db, 'menuDirectory', restaurantSlug), {
@@ -75,7 +86,7 @@ try {
 
   console.log(`Restaurante criado: ${restaurantName}`)
   console.log(`Link: https://tokka-eb4ae.web.app/#cardapio-${restaurantSlug}`)
-  console.log(`Administrador vinculado: ${adminEmail}`)
+  console.log(`Administrador vinculado: ${normalizedAdminEmail}`)
 } finally {
   await signOut(ownerAuth).catch(() => {})
   await signOut(adminAuth).catch(() => {})

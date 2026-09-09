@@ -17,6 +17,13 @@ import { auth, db, firebaseConfig } from './firebase'
 
 export const bootstrapAdminEmail = 'cocobambu@tokka.com.br'
 
+function normalizeAdminEmail(email) {
+  return String(email ?? '')
+    .trim()
+    .replace(/\\+@/g, '@')
+    .toLowerCase()
+}
+
 export function watchAdminSession(restaurantId, onChange) {
   return onAuthStateChanged(auth, async (user) => {
     if (!user) {
@@ -57,7 +64,7 @@ export function watchAdminSession(restaurantId, onChange) {
 }
 
 export function loginAdmin(email, password) {
-  return signInWithEmailAndPassword(auth, email.trim(), password)
+  return signInWithEmailAndPassword(auth, normalizeAdminEmail(email), password)
 }
 
 export async function resolveAdminRestaurantId(user, preferredRestaurantId = 'tokka-foods') {
@@ -89,7 +96,7 @@ export async function resolveAdminRestaurantId(user, preferredRestaurantId = 'to
 }
 
 export async function registerAdmin(restaurantId, { username, email, password }) {
-  const normalizedEmail = email.trim().toLowerCase()
+  const normalizedEmail = normalizeAdminEmail(email)
   const normalizedUsername = username.trim()
   const role = normalizedEmail === bootstrapAdminEmail ? 'owner' : 'admin'
   let credential
@@ -126,7 +133,7 @@ export async function registerAdmin(restaurantId, { username, email, password })
 }
 
 export function recoverAdminPassword(email) {
-  return sendPasswordResetEmail(auth, email.trim(), {
+  return sendPasswordResetEmail(auth, normalizeAdminEmail(email), {
     url: `${window.location.origin}${window.location.pathname}#admin-principal`,
   })
 }
@@ -141,7 +148,7 @@ export async function changeAdminCredentials(restaurantId, { currentPassword, em
 
   await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword))
 
-  const normalizedEmail = email.trim().toLowerCase()
+  const normalizedEmail = normalizeAdminEmail(email)
   if (normalizedEmail && normalizedEmail !== user.email) await updateEmail(user, normalizedEmail)
   if (password) await updatePassword(user, password)
 
@@ -156,7 +163,19 @@ export async function createRestaurantWithAdmin({ ownerRestaurantId, name, slug,
   const secondaryAuth = getAuth(secondaryApp)
 
   try {
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, email.trim().toLowerCase(), password)
+    const normalizedEmail = normalizeAdminEmail(email)
+    let credential
+
+    try {
+      credential = await createUserWithEmailAndPassword(secondaryAuth, normalizedEmail, password)
+    } catch (error) {
+      if (error?.code !== 'auth/email-already-in-use') {
+        throw error
+      }
+
+      credential = await signInWithEmailAndPassword(secondaryAuth, normalizedEmail, password)
+    }
+
     if (adminName.trim()) await updateProfile(credential.user, { displayName: adminName.trim() })
 
     await setDoc(doc(db, 'restaurants', slug), {
@@ -167,14 +186,14 @@ export async function createRestaurantWithAdmin({ ownerRestaurantId, name, slug,
       createdAt: serverTimestamp(),
     })
     await setDoc(doc(db, 'restaurants', slug, 'admins', credential.user.uid), {
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       username: adminName.trim(),
       role: 'owner',
       createdAt: serverTimestamp(),
     })
     await setDoc(doc(db, 'adminDirectory', credential.user.uid), {
       restaurantId: slug,
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       active: true,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -213,6 +232,10 @@ export function translateAdminAuthError(error) {
     return 'Conta administrativa nao encontrada.'
   }
 
+  if (code.includes('auth/user-disabled')) {
+    return 'Esta conta administrativa foi desativada no Firebase.'
+  }
+
   if (code.includes('auth/email-already-in-use')) {
     return 'Este email ja possui uma conta administrativa.'
   }
@@ -223,6 +246,18 @@ export function translateAdminAuthError(error) {
 
   if (code.includes('auth/invalid-email')) {
     return 'Informe um email valido.'
+  }
+
+  if (code.includes('auth/operation-not-allowed')) {
+    return 'Login por email e senha nao esta habilitado no Firebase Auth.'
+  }
+
+  if (code.includes('auth/invalid-api-key') || code.includes('auth/api-key-not-valid')) {
+    return 'Configuracao do Firebase invalida neste deploy.'
+  }
+
+  if (code.includes('auth/network-request-failed')) {
+    return 'Falha de rede ao conectar com o Firebase.'
   }
 
   if (code.includes('auth/missing-password')) {

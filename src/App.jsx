@@ -415,6 +415,37 @@ const baseProducts = [
   },
 ]
 
+const appAssetRegistry = {
+  'profile.cover.coco-bambu': { src: cocoBackground, tokens: ['cocobambu_fundo'] },
+  'profile.logo.coco-bambu': { src: cocoLogo, tokens: ['logo-coco-bambu', 'logo coco bambu'] },
+  'promo.coco-brasil': { src: promoShrimp, tokens: ['slide_0', 'slide-0'] },
+  'promo.scampi': { src: promoScampi, tokens: ['slide_2', 'slide-2'] },
+  'promo.vezz': { src: slideVezzBanner, tokens: ['slide-vezz-banner'] },
+  'category.image.bebidas': { src: categoriaBebidas, tokens: ['img bebidas@3x', 'img bebidas'] },
+  'category.image.carnes': { src: categoriaCarnes, tokens: ['img carne@3x', 'img carne'] },
+  'category.image.entradas': { src: categoriaEntradas, tokens: ['img entradas@3x', 'img entradas'] },
+  'category.image.frangos': { src: categoriaFrangos, tokens: ['img frango@3x', 'img frango'] },
+  'category.image.frutos-do-mar': { src: categoriaFrutosDoMar, tokens: ['img frutos do mar@3x', 'img frutos do mar'] },
+  'category.image.saladas': { src: categoriaSaladas, tokens: ['img saladas@3x', 'img saladas'] },
+  'category.image.sobremesas': { src: categoriaSobremesas, tokens: ['img sobremesas@3x', 'img sobremesas'] },
+  'category.image.veganos': { src: categoriaVeganos, tokens: ['img vegano@3x', 'img vegano'] },
+  'category.icon.bebidas': { src: iconBebidas, tokens: ['icon bebidas'] },
+  'category.icon.carnes': { src: iconCarnes, tokens: ['icon carne'] },
+  'category.icon.entradas': { src: iconEntradas, tokens: ['icon entrada'] },
+  'category.icon.frangos': { src: iconFrangos, tokens: ['icon frango'] },
+  'category.icon.frutos-do-mar': { src: iconFrutosDoMar, tokens: ['icon frutos do mar'] },
+  'category.icon.saladas': { src: iconSaladas, tokens: ['icon salada'] },
+  'category.icon.sobremesas': { src: iconSobremesas, tokens: ['icon sobremesa'] },
+  'category.icon.veganos': { src: iconVeganos, tokens: ['icon vegano'] },
+  'product.caldinho-de-peixe': { src: pratoCaldinhoDePeixe, tokens: ['prato-caldinho-de-peixe'] },
+  'product.camarao-coco-brasil': { src: pratoCamaraoCocoBrasil, tokens: ['prato-camarao-coco-brasil'] },
+  'product.isca-de-peixe': { src: pratoIscaDePeixe, tokens: ['prato-isca-de-peixe'] },
+}
+
+const appAssetUrlToKey = new Map(
+  Object.entries(appAssetRegistry).map(([key, asset]) => [asset.src, key]),
+)
+
 function App() {
   const initialTable = getTableFromUrl()
   const initialMenuSlug = getMenuSlugFromHash() || defaultRestaurantProfile.slug
@@ -1332,6 +1363,7 @@ function App() {
         {screen === 'menu' && (
           <MenuScreen
             products={menuProducts}
+            categories={categories}
             activeCategory={activeCategory}
             menuCategorySelected={menuCategorySelected}
             cartQuantity={cartQuantity}
@@ -1707,7 +1739,12 @@ function CategoryDishCard({ product, onOpen }) {
         <span className="block text-[13px] font-bold">{formatCurrency(product.price)}</span>
       </span>
       <span className="brand-photo-frame relative block h-[90px] self-center overflow-hidden rounded-lg bg-[#4b160e]">
-        <img src={product.image} alt="" className="block size-full scale-[1.03] object-cover" />
+        <ImageWithFallback
+          src={product.image}
+          fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
+          alt=""
+          className="block size-full scale-[1.03] object-cover"
+        />
         <span className="absolute bottom-2 right-2 flex h-5 items-center justify-center whitespace-nowrap rounded-full bg-white/95 px-2 text-[7.5px] font-black leading-none text-[#4b160e] shadow-[0_2px_8px_rgba(67,22,15,0.16)]">
           VER PRATO &gt;
         </span>
@@ -1726,7 +1763,7 @@ function TopPhotoBar({
 }) {
   return (
     <div className="relative h-[144px] overflow-hidden">
-      <img src={backgroundImage} alt="" className="h-full w-full object-cover" draggable="false" />
+      <ImageWithFallback src={backgroundImage} fallbackSrc={cocoBackground} alt="" className="h-full w-full object-cover" draggable="false" />
       <div className="absolute inset-0 bg-black/10" />
       {showBack && (
         <button
@@ -1754,8 +1791,28 @@ function TopPhotoBar({
   )
 }
 
+function ImageWithFallback({ src, fallbackSrc, alt = '', onError, ...props }) {
+  const resolvedFallback = hydrateImageSource(fallbackSrc, '')
+  const resolvedSource = hydrateImageSource(src, resolvedFallback)
+  const [failedSource, setFailedSource] = useState('')
+  const currentSource = failedSource === resolvedSource
+    ? resolvedFallback
+    : resolvedSource || resolvedFallback
+
+  function handleError(event) {
+    onError?.(event)
+
+    if (resolvedFallback && currentSource !== resolvedFallback) {
+      setFailedSource(resolvedSource)
+    }
+  }
+
+  return <img src={currentSource || resolvedFallback} alt={alt} onError={handleError} {...props} />
+}
+
 function MenuScreen({
   products,
+  categories,
   activeCategory,
   menuCategorySelected,
   cartQuantity,
@@ -1845,8 +1902,9 @@ function MenuScreen({
         />
       </div>
 
-      <img
+      <ImageWithFallback
         src={restaurantProfile.logo}
+        fallbackSrc={cocoLogo}
         alt={restaurantProfile.name}
         loading="eager"
         decoding="sync"
@@ -2153,8 +2211,9 @@ function PromoCarousel({ activeIndex, slides = promoSlides, onSelect, onOpenProm
               zIndex: Math.round((2 - Math.min(distanceFromCenter, 2)) * 10),
             }}
           >
-            <img
+            <ImageWithFallback
               src={slide.image}
+              fallbackSrc={slide.id === protectedPromoSlideId ? slideVezzBanner : promoShrimp}
               alt={slide.alt}
               className={`h-full w-full ${slide.fit === 'cover' ? 'object-cover' : 'object-contain'}`}
               draggable="false"
@@ -2179,8 +2238,9 @@ function CategoryPreviewCard({ category, active, onClick }) {
           active ? 'ring-2 ring-[#4b160e] ring-offset-2 ring-offset-white' : ''
         }`}
       >
-        <img
+        <ImageWithFallback
           src={category.image}
+          fallbackSrc={fallbackImages[category.id] || categoriaEntradas}
           alt=""
           loading="eager"
           decoding="sync"
@@ -2243,8 +2303,9 @@ function MenuProductCard({ product, onOpen }) {
         <span className="block text-[13px] font-bold">{formatCurrency(product.price)}</span>
       </span>
       <span className="brand-photo-frame relative block h-[96px] self-center overflow-hidden rounded-lg bg-[#4b160e]">
-        <img
+        <ImageWithFallback
           src={product.image}
+          fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
           alt=""
           className={`block size-full object-cover object-center ${product.id === 'camarao-coco-brasil' ? 'scale-[1.14]' : 'scale-[1.03]'}`}
         />
@@ -2266,8 +2327,9 @@ function MenuProductGridCard({ product, onOpen }) {
       className="h-[236px] overflow-hidden rounded-lg bg-[#f0f0f0] p-2.5 text-left transition active:scale-[0.99]"
     >
       <span className="brand-photo-frame relative block h-[108px] overflow-hidden rounded-lg bg-[#4b160e]">
-        <img
+        <ImageWithFallback
           src={product.image}
+          fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
           alt=""
           className={`block size-full object-cover object-center ${product.id === 'camarao-coco-brasil' ? 'scale-[1.14]' : 'scale-[1.03]'}`}
         />
@@ -2297,8 +2359,9 @@ function PromotionScreen({ promo, restaurantProfile = defaultRestaurantProfile, 
 
       <div className="-mt-9 rounded-t-[36px] bg-white px-6 pb-8 pt-8 shadow-[0_-14px_34px_rgba(67,22,15,0.10)]">
         <div className="overflow-hidden rounded-xl bg-[#4b160e] p-2 shadow-lg shadow-[#4b160e]/10">
-          <img
+          <ImageWithFallback
             src={promo?.image}
+            fallbackSrc={promo?.id === protectedPromoSlideId ? slideVezzBanner : promoShrimp}
             alt={promo?.alt ?? 'Promoção'}
             className="h-[164px] w-full rounded-lg object-contain"
             draggable="false"
@@ -2358,8 +2421,9 @@ function PromotionScreen({ promo, restaurantProfile = defaultRestaurantProfile, 
 function ProductImageGallery({ product }) {
   return (
     <div className="brand-photo-frame mx-1 aspect-[1.48] overflow-hidden rounded-lg bg-[#4b160e] p-2" aria-label="Foto do prato">
-      <img
+      <ImageWithFallback
         src={product.image}
+        fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
         alt={product.name}
         className="size-full rounded-md object-cover"
         draggable="false"
@@ -5931,9 +5995,68 @@ function buildPublicMenuUrl(slugOrName = defaultRestaurantProfile.slug) {
   return url.toString()
 }
 
+function serializeImageSource(value) {
+  const key = getAppAssetKey(value)
+  return key ? `app-asset:${key}` : value
+}
+
+function hydrateImageSource(value, fallback) {
+  const source = typeof value === 'string' ? value.trim() : ''
+  const key = getAppAssetKey(source)
+
+  if (key) return appAssetRegistry[key].src
+  if (!source || isLegacyDevelopmentAsset(source) || isBundledAppAssetPath(source)) return fallback
+  return source
+}
+
+function getAppAssetKey(value) {
+  const source = typeof value === 'string' ? value.trim() : ''
+  if (!source) return ''
+
+  const directKey = appAssetUrlToKey.get(source)
+  if (directKey) return directKey
+
+  if (source.startsWith('app-asset:')) {
+    const assetKey = source.slice('app-asset:'.length)
+    return appAssetRegistry[assetKey] ? assetKey : ''
+  }
+
+  const fingerprint = normalizeAssetFingerprint(source)
+  if (!isAppAssetReference(fingerprint)) return ''
+
+  return Object.entries(appAssetRegistry).find(([, asset]) =>
+    asset.tokens.some((token) => fingerprint.includes(token)),
+  )?.[0] ?? ''
+}
+
+function normalizeAssetFingerprint(value) {
+  try {
+    return decodeURIComponent(value).replace(/\\/g, '/').toLowerCase()
+  } catch {
+    return String(value).replace(/\\/g, '/').toLowerCase()
+  }
+}
+
+function isAppAssetReference(value) {
+  return value.startsWith('assets/') || value.includes('/assets/') || value.includes('/src/assets/') || value.includes('src/assets/')
+}
+
+function isBundledAppAssetPath(value) {
+  const fingerprint = normalizeAssetFingerprint(value)
+  return fingerprint.startsWith('/assets/') || fingerprint.startsWith('assets/')
+}
+
+function serializeRestaurantProfile(profile) {
+  return {
+    ...profile,
+    logo: serializeImageSource(profile.logo),
+    cover: serializeImageSource(profile.cover),
+  }
+}
+
 function normalizeRestaurantProfile(profile = defaultRestaurantProfile) {
-  const logo = isLegacyDevelopmentAsset(profile.logo) ? defaultRestaurantProfile.logo : profile.logo
-  const cover = isLegacyDevelopmentAsset(profile.cover) ? defaultRestaurantProfile.cover : profile.cover
+  const logo = hydrateImageSource(profile.logo, defaultRestaurantProfile.logo)
+  const cover = hydrateImageSource(profile.cover, defaultRestaurantProfile.cover)
 
   return {
     ...defaultRestaurantProfile,
@@ -5964,7 +6087,7 @@ function buildMenuStateSnapshot(profile = defaultRestaurantProfile, promoItems =
 
   return {
     version: 1,
-    profile: normalizedProfile,
+    profile: serializeRestaurantProfile(normalizedProfile),
     categories: serializeCategories(categoryItems),
     promoItems: serializePromoItems(promoItems),
     products: serializeProducts(products),
@@ -5987,7 +6110,11 @@ function normalizeMenuStateSnapshot(menuState, fallbackSlug = defaultRestaurantP
 }
 
 function serializeCategories(items = categories) {
-  return items.map((item) => ({ ...item }))
+  return items.map((item) => ({
+    ...item,
+    iconImage: serializeImageSource(item.iconImage),
+    image: serializeImageSource(item.image),
+  }))
 }
 
 function hydrateCategories(items) {
@@ -6001,16 +6128,17 @@ function hydrateCategories(items) {
       ...item,
       label: item.label || baseCategory?.label || 'Categoria',
       shortLabel: item.shortLabel || item.label || baseCategory?.shortLabel || 'Categoria',
-      iconImage: item.iconImage || baseCategory?.iconImage || iconEntradas,
-      image: isLegacyDevelopmentAsset(item.image)
-        ? baseCategory?.image || categoriaEntradas
-        : item.image || baseCategory?.image || categoriaEntradas,
+      iconImage: hydrateImageSource(item.iconImage, baseCategory?.iconImage || iconEntradas),
+      image: hydrateImageSource(item.image, baseCategory?.image || categoriaEntradas),
     }
   })
 }
 
 function serializePromoItems(items = promoSlides) {
-  return items.map((item) => ({ ...item }))
+  return items.map((item) => ({
+    ...item,
+    image: serializeImageSource(item.image),
+  }))
 }
 
 function serializeProducts(items = baseProducts) {
@@ -6018,6 +6146,7 @@ function serializeProducts(items = baseProducts) {
     const serializableItem = { ...item }
 
     delete serializableItem.badgeIcon
+    serializableItem.image = serializeImageSource(serializableItem.image)
 
     return serializableItem
   })
@@ -6032,7 +6161,7 @@ function hydratePromoItems(items) {
     return {
       ...(basePromo ?? {}),
       ...item,
-      image: isLegacyDevelopmentAsset(item.image) ? basePromo?.image || promoShrimp : item.image || basePromo?.image || promoShrimp,
+      image: hydrateImageSource(item.image, basePromo?.image || promoShrimp),
     }
   })
 }
@@ -6048,9 +6177,7 @@ function hydrateProducts(items) {
       ...(baseProduct ?? {}),
       ...item,
       category,
-      image: isLegacyDevelopmentAsset(item.image)
-        ? baseProduct?.image || fallbackImages[category] || categoriaFrutosDoMar
-        : item.image || baseProduct?.image || fallbackImages[category] || categoriaFrutosDoMar,
+      image: hydrateImageSource(item.image, baseProduct?.image || fallbackImages[category] || categoriaFrutosDoMar),
       tags: Array.isArray(item.tags) ? item.tags : baseProduct?.tags ?? [],
       options: Array.isArray(item.options) ? item.options : baseProduct?.options ?? [],
       active: item.active !== false,
