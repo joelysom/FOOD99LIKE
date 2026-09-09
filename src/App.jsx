@@ -601,6 +601,21 @@ function App() {
   }, [])
 
   useEffect(() => {
+    syncAppViewportHeight()
+
+    const visualViewport = window.visualViewport
+    window.addEventListener('resize', syncAppViewportHeight)
+    window.addEventListener('orientationchange', syncAppViewportHeight)
+    visualViewport?.addEventListener('resize', syncAppViewportHeight)
+
+    return () => {
+      window.removeEventListener('resize', syncAppViewportHeight)
+      window.removeEventListener('orientationchange', syncAppViewportHeight)
+      visualViewport?.removeEventListener('resize', syncAppViewportHeight)
+    }
+  }, [])
+
+  useEffect(() => {
     return watchAdminSession(activeRestaurantId, (session) => {
       if (adminRegistrationPendingRef.current && session.user && !session.isAdmin) {
         return
@@ -1382,10 +1397,10 @@ function App() {
   return (
     <main
       aria-label={menuPlaceholderActive ? 'Cardapio digital' : `Cardapio digital ${restaurantProfile.name}`}
-      className="min-h-screen overflow-x-hidden bg-slate-100 text-slate-950 md:grid md:place-items-center md:px-6 md:py-8"
+      className="app-main bg-slate-100 text-slate-950"
     >
       <div
-        className={`brand-theme fixed inset-0 h-[100dvh] w-[100dvw] max-w-none overflow-hidden md:static md:mx-auto md:h-[932px] md:w-full md:max-w-[430px] md:rounded-[28px] md:shadow-2xl md:shadow-slate-300/80 ${
+        className={`app-shell brand-theme overflow-hidden ${
           screen === 'entrada' ? 'bg-[#45150d]' : 'bg-white'
         }`}
         style={buildThemeStyle(restaurantProfile)}
@@ -6271,6 +6286,15 @@ function isLegacyDevelopmentAsset(value) {
 
 function getTableFromUrl() {
   return new URLSearchParams(window.location.search).get('mesa') ?? ''
+}
+
+function syncAppViewportHeight() {
+  if (typeof window === 'undefined') return
+
+  const viewportHeight = window.visualViewport?.height || window.innerHeight
+  if (!viewportHeight) return
+
+  document.documentElement.style.setProperty('--app-viewport-height', `${Math.round(viewportHeight)}px`)
 }
 
 function getMenuSlugFromHash(hashValue = window.location.hash) {

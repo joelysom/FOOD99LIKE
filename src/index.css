@@ -9,7 +9,57 @@
   font-family: 'Montserrat', sans-serif;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+}
+
 /* Reaplica automaticamente a identidade extraída da logo nos componentes legados. */
+.app-main {
+  min-height: var(--app-viewport-height, 100vh);
+  min-height: var(--app-viewport-height, 100dvh);
+  overflow-x: hidden;
+}
+
+.app-shell {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  width: 100dvw;
+  height: var(--app-viewport-height, 100vh);
+  height: var(--app-viewport-height, 100dvh);
+  max-width: none;
+}
+
+@media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+  .app-main {
+    display: grid;
+    min-height: var(--app-viewport-height, 100vh);
+    min-height: var(--app-viewport-height, 100dvh);
+    place-items: center;
+    padding: 2rem 1.5rem;
+  }
+
+  .app-shell {
+    position: static;
+    width: min(100%, 430px);
+    max-width: 430px;
+    height: min(932px, calc(var(--app-viewport-height, 100vh) - 4rem));
+    height: min(932px, calc(var(--app-viewport-height, 100dvh) - 4rem));
+    min-height: min(932px, calc(var(--app-viewport-height, 100vh) - 4rem));
+    min-height: min(932px, calc(var(--app-viewport-height, 100dvh) - 4rem));
+    margin-inline: auto;
+    border-radius: 28px;
+    box-shadow: 0 25px 50px -12px rgb(203 213 225 / 0.8);
+  }
+}
+
 .brand-theme > section {
   background-color: #ffffff;
 }
