@@ -2176,7 +2176,7 @@ function MenuScreen({
 
             <div
               ref={categoryStripRef}
-              className="-mx-8 -mt-2 overflow-x-auto overflow-y-hidden pt-3 [scrollbar-width:none] [touch-action:pan-x_pinch-zoom]"
+              className="-mx-8 -mt-2 overflow-x-auto overflow-y-hidden pt-3 [scrollbar-width:none] [touch-action:pan-x_pan-y_pinch-zoom]"
             >
               <div className="flex w-max translate-y-1.5 gap-2 px-3 pb-1">
                 {categoryItems.map((category) => (
