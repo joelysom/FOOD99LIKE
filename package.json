@@ -25,6 +25,7 @@
     "@tailwindcss/oxide-win32-x64-msvc": "^4.3.3",
     "@tailwindcss/vite": "latest",
     "@vitejs/plugin-react": "latest",
+    "cropperjs": "^1.6.2",
     "firebase": "^12.17.1",
     "lucide-react": "latest",
     "react": "latest",
