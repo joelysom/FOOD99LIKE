@@ -512,6 +512,7 @@ function App() {
   const adminRegistrationPendingRef = useRef(false)
   const initialMenuEventSyncedRef = useRef(false)
   const menuStateLoadedRef = useRef(false)
+  const loadedMenuSlugRef = useRef(initialCachedMenuState ? initialMenuSlug : '')
   const [analyticsEvents, setAnalyticsEvents] = useState(() => {
     const nextEvents = [
       ...readAnalyticsEvents(),
@@ -646,11 +647,12 @@ function App() {
     let cancelled = false
     const slug = activeMenuSlug || defaultRestaurantProfile.slug
     const cachedState = readCachedMenuState(restaurantId, slug)
+    const menuAlreadyLoaded = loadedMenuSlugRef.current === slug
 
     menuStateLoadedRef.current = false
     setMenuLoadState({
       failed: false,
-      loading: shouldBlockCustomMenuPaint(slug, cachedState),
+      loading: shouldBlockCustomMenuPaint(slug, cachedState, menuAlreadyLoaded),
       slug,
     })
 
@@ -661,6 +663,11 @@ function App() {
       if (cancelled) return
 
       if (!savedState && isCustomMenuSlug(slug)) {
+        if (loadedMenuSlugRef.current === slug) {
+          setMenuLoadState({ failed: false, loading: false, slug })
+          return
+        }
+
         setActiveRestaurantId(resolvedRestaurantId)
         analyticsSession.restaurantId = resolvedRestaurantId
         setCart([])
@@ -669,7 +676,6 @@ function App() {
       }
 
       const nextState = normalizeMenuStateSnapshot(savedState, slug)
-      await preloadImages([nextState.profile.logo, nextState.profile.cover])
       if (cancelled) return
 
       setActiveRestaurantId(resolvedRestaurantId)
@@ -686,13 +692,16 @@ function App() {
       )
       setCart([])
       menuStateLoadedRef.current = true
+      loadedMenuSlugRef.current = slug
+      void preloadImages([nextState.profile.logo, nextState.profile.cover])
       setMenuLoadState({ failed: false, loading: false, slug })
     }
 
     hydrateMenuState().catch(() => {
       if (!cancelled) {
+        const hasLoadedMenu = loadedMenuSlugRef.current === slug
         setMenuLoadState({
-          failed: isCustomMenuSlug(slug),
+          failed: isCustomMenuSlug(slug) && !hasLoadedMenu,
           loading: false,
           slug,
         })
@@ -732,9 +741,10 @@ function App() {
 
       if (nextMenuSlug) {
         const cachedState = readCachedMenuState(restaurantId, nextMenuSlug)
+        const menuAlreadyLoaded = loadedMenuSlugRef.current === nextMenuSlug
         setMenuLoadState({
           failed: false,
-          loading: shouldBlockCustomMenuPaint(nextMenuSlug, cachedState),
+          loading: shouldBlockCustomMenuPaint(nextMenuSlug, cachedState, menuAlreadyLoaded),
           slug: nextMenuSlug,
         })
         setActiveMenuSlug(nextMenuSlug)
@@ -1453,7 +1463,6 @@ function App() {
           <MenuScreen
             categories={categories}
             products={menuProducts}
-            categories={categories}
             activeCategory={activeCategory}
             menuCategorySelected={menuCategorySelected}
             cartQuantity={cartQuantity}
@@ -7133,8 +7142,8 @@ function isCustomMenuSlug(slug) {
   return Boolean(slug) && slug !== defaultRestaurantProfile.slug
 }
 
-function shouldBlockCustomMenuPaint(slug, cachedState) {
-  return isCustomMenuSlug(slug) && !cachedState
+function shouldBlockCustomMenuPaint(slug, cachedState, menuAlreadyLoaded = false) {
+  return isCustomMenuSlug(slug) && !cachedState && !menuAlreadyLoaded
 }
 
 function isPublicMenuScreen(screen) {
