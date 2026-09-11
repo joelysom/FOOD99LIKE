@@ -35,7 +35,18 @@ export async function loadMenuState(restaurantId, slug) {
       const remoteState = menuSnapshot.data()
       const productSnapshot = await getDocs(getProductCollectionRef(restaurantId))
       if (!productSnapshot.empty) {
-        remoteState.products = productSnapshot.docs.map((productDoc) => productDoc.data())
+        const hasProductIds = Array.isArray(remoteState.productIds)
+        const productIds = hasProductIds ? remoteState.productIds : []
+        const productIdSet = hasProductIds ? new Set(productIds) : null
+        const products = productSnapshot.docs
+          .filter((productDoc) => !hasProductIds || productIdSet.has(productDoc.id))
+          .map((productDoc) => productDoc.data())
+
+        remoteState.products = hasProductIds
+          ? productIds
+              .map((productId) => products.find((product) => product.id === productId))
+              .filter(Boolean)
+          : products
       }
       cacheMenuState(restaurantId, slug, remoteState)
       return remoteState
@@ -78,8 +89,6 @@ export async function saveMenuState(restaurantId, slug, menuState, { remote = tr
   try {
     const products = Array.isArray(nextState.products) ? nextState.products : []
     const productCollectionRef = getProductCollectionRef(restaurantId)
-    const existingProducts = await getDocs(productCollectionRef)
-    const nextProductIds = new Set(products.map((product) => product.id))
     const batch = writeBatch(db)
 
     batch.set(getMenuStateRef(restaurantId, slug), {
@@ -91,10 +100,6 @@ export async function saveMenuState(restaurantId, slug, menuState, { remote = tr
 
     products.forEach((product) => {
       batch.set(doc(productCollectionRef, product.id), product)
-    })
-
-    existingProducts.docs.forEach((productDoc) => {
-      if (!nextProductIds.has(productDoc.id)) batch.delete(productDoc.ref)
     })
 
     await batch.commit()

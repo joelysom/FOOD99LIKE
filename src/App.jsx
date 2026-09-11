@@ -116,6 +116,7 @@ const tableOptions = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'
 
 const restaurantId = 'tokka-foods'
 const restaurantName = 'COCO BAMBU'
+const pixCardPaymentFeePercent = 3.99
 const defaultRestaurantProfile = {
   name: 'COCO BAMBU',
   location: 'Derby, Recife - PE',
@@ -460,20 +461,21 @@ function App() {
   const initialScreen = getInitialScreen()
   const initialMenuSlug = getMenuSlugFromHash() || defaultRestaurantProfile.slug
   const initialCachedMenuState = readCachedMenuState(restaurantId, initialMenuSlug)
+  const initialMenuBlockingLoad = shouldBlockCustomMenuPaint(initialMenuSlug, initialCachedMenuState)
   const initialMenuState = normalizeMenuStateSnapshot(initialCachedMenuState, initialMenuSlug)
   const [analyticsSession] = useState(() => getAnalyticsSession(initialTable))
   const [screen, setScreen] = useState(() => initialScreen)
   const [menuMode, setMenuMode] = useState('padrao')
   const [activeCategory, setActiveCategory] = useState(() => getCategoryFromHash() || 'frutos-do-mar')
   const [menuCategorySelected, setMenuCategorySelected] = useState(false)
-  const [selectedProductId, setSelectedProductId] = useState(() => getProductFromHash())
+  const [selectedProductId, setSelectedProductId] = useState(() => getProductIdFromHash())
   const [selectedPromoId, setSelectedPromoId] = useState(() => getPromoFromHash())
   const [productReturnScreen, setProductReturnScreen] = useState('menu')
   const [activeMenuSlug, setActiveMenuSlug] = useState(initialMenuSlug)
   const [menuReloadToken, setMenuReloadToken] = useState(0)
   const [menuLoadState, setMenuLoadState] = useState(() => ({
     failed: false,
-    loading: shouldBlockCustomMenuPaint(initialMenuSlug, initialCachedMenuState),
+    loading: initialMenuBlockingLoad,
     slug: initialMenuSlug,
   }))
   const [restaurantProfile, setRestaurantProfile] = useState(initialMenuState.profile)
@@ -513,6 +515,7 @@ function App() {
   const initialMenuEventSyncedRef = useRef(false)
   const menuStateLoadedRef = useRef(false)
   const loadedMenuSlugRef = useRef(initialCachedMenuState ? initialMenuSlug : '')
+  const menuBlockingLoadCompletedRef = useRef(!initialMenuBlockingLoad)
   const [analyticsEvents, setAnalyticsEvents] = useState(() => {
     const nextEvents = [
       ...readAnalyticsEvents(),
@@ -531,7 +534,10 @@ function App() {
     [products],
   )
   const selectedProduct =
-    menuProducts.find((product) => product.id === selectedProductId) ?? menuProducts[0]
+    menuProducts.find((product) => product.id === selectedProductId)
+    ?? products.find((product) => product.id === selectedProductId)
+    ?? menuProducts[0]
+    ?? products[0]
   const selectedPromo = promoItems.find((slide) => slide.id === selectedPromoId) ?? promoItems[0]
   const cartItems = cart
     .map((item) => ({
@@ -628,6 +634,14 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const canonicalHash = getCanonicalPublicMenuHash(window.location.hash, initialMenuSlug)
+
+    if (canonicalHash) {
+      window.history.replaceState(null, '', canonicalHash)
+    }
+  }, [initialMenuSlug])
+
+  useEffect(() => {
     return watchAdminSession(activeRestaurantId, (session) => {
       if (adminRegistrationPendingRef.current && session.user && !session.isAdmin) {
         return
@@ -648,11 +662,14 @@ function App() {
     const slug = activeMenuSlug || defaultRestaurantProfile.slug
     const cachedState = readCachedMenuState(restaurantId, slug)
     const menuAlreadyLoaded = loadedMenuSlugRef.current === slug
+    const useBlockingLoader =
+      !menuBlockingLoadCompletedRef.current
+      && shouldBlockCustomMenuPaint(slug, cachedState, menuAlreadyLoaded)
 
     menuStateLoadedRef.current = false
     setMenuLoadState({
       failed: false,
-      loading: shouldBlockCustomMenuPaint(slug, cachedState, menuAlreadyLoaded),
+      loading: useBlockingLoader,
       slug,
     })
 
@@ -668,10 +685,11 @@ function App() {
           return
         }
 
+        menuBlockingLoadCompletedRef.current = true
         setActiveRestaurantId(resolvedRestaurantId)
         analyticsSession.restaurantId = resolvedRestaurantId
         setCart([])
-        setMenuLoadState({ failed: true, loading: false, slug })
+        setMenuLoadState({ failed: useBlockingLoader, loading: false, slug })
         return
       }
 
@@ -693,6 +711,7 @@ function App() {
       setCart([])
       menuStateLoadedRef.current = true
       loadedMenuSlugRef.current = slug
+      menuBlockingLoadCompletedRef.current = true
       void preloadImages([nextState.profile.logo, nextState.profile.cover])
       setMenuLoadState({ failed: false, loading: false, slug })
     }
@@ -700,8 +719,9 @@ function App() {
     hydrateMenuState().catch(() => {
       if (!cancelled) {
         const hasLoadedMenu = loadedMenuSlugRef.current === slug
+        menuBlockingLoadCompletedRef.current = true
         setMenuLoadState({
-          failed: isCustomMenuSlug(slug) && !hasLoadedMenu,
+          failed: useBlockingLoader && isCustomMenuSlug(slug) && !hasLoadedMenu,
           loading: false,
           slug,
         })
@@ -740,11 +760,20 @@ function App() {
       setScreen(nextScreen)
 
       if (nextMenuSlug) {
+        const canonicalHash = getCanonicalPublicMenuHash(window.location.hash, nextMenuSlug)
         const cachedState = readCachedMenuState(restaurantId, nextMenuSlug)
         const menuAlreadyLoaded = loadedMenuSlugRef.current === nextMenuSlug
+        const useBlockingLoader =
+          !menuBlockingLoadCompletedRef.current
+          && shouldBlockCustomMenuPaint(nextMenuSlug, cachedState, menuAlreadyLoaded)
+
+        if (canonicalHash) {
+          window.history.replaceState(null, '', canonicalHash)
+        }
+
         setMenuLoadState({
           failed: false,
-          loading: shouldBlockCustomMenuPaint(nextMenuSlug, cachedState, menuAlreadyLoaded),
+          loading: useBlockingLoader,
           slug: nextMenuSlug,
         })
         setActiveMenuSlug(nextMenuSlug)
@@ -760,7 +789,7 @@ function App() {
       }
 
       if (nextScreen === 'produto') {
-        setSelectedProductId(getProductFromHash())
+        setSelectedProductId(getProductIdFromHash())
       }
 
       if (nextScreen === 'promocao') {
@@ -820,8 +849,20 @@ function App() {
           : hashValue
 
     stopSpeech()
+
+    if (loadedMenuSlugRef.current && isPublicMenuScreen(normalizedScreen)) {
+      setMenuLoadState({
+        failed: false,
+        loading: false,
+        slug: activeMenuSlug || loadedMenuSlugRef.current,
+      })
+    }
+
     setScreen(normalizedScreen)
-    window.location.hash = normalizedHash
+    const nextHash = normalizedHash.startsWith('#') ? normalizedHash : `#${normalizedHash}`
+    if (window.location.hash !== nextHash) {
+      window.location.hash = normalizedHash
+    }
   }
 
   function returnToPublicMenu() {
@@ -984,7 +1025,7 @@ function App() {
     setEditingCartItem(null)
     setProductReturnScreen(returnScreenOverride || (screen === 'categoria-pratos' ? 'categoria-pratos' : 'menu'))
     setSelectedProductId(product.id)
-    showScreen('produto', `produto=${product.id}`)
+    showScreen('produto', `produto=${encodeURIComponent(product.id)}`)
     trackEvent('product_view', {
       productId: product.id,
       productName: product.name,
@@ -1137,7 +1178,7 @@ function App() {
     setEditingCartItem(item)
     setProductReturnScreen('pedido')
     setSelectedProductId(item.productId)
-    showScreen('produto', `produto=${item.productId}`)
+    showScreen('produto', `produto=${encodeURIComponent(item.productId)}`)
   }
 
   function saveCartItemEdit(selectedOption, note) {
@@ -1449,6 +1490,7 @@ function App() {
             failed={menuLoadState.failed}
             onRetry={() => {
               const slug = activeMenuSlug || defaultRestaurantProfile.slug
+              menuBlockingLoadCompletedRef.current = false
               setMenuLoadState({ failed: false, loading: isCustomMenuSlug(slug), slug })
               setMenuReloadToken((currentToken) => currentToken + 1)
             }}
@@ -1619,6 +1661,7 @@ function App() {
 
         {screen === 'admin-cardapio' && adminSession.isAdmin && adminAccessVerified && (
           <AdminMenuEditor
+            analyticsSummary={analyticsSummary}
             categories={categories}
             exitRequestId={adminExitRequestId}
             products={products}
@@ -1639,13 +1682,32 @@ function App() {
                 const nextPromos = editorState.promoItems ?? promoItems
                 const nextCategories = editorState.categories ?? categories
 
+                const menuState = buildMenuStateSnapshot(
+                  normalizedProfile,
+                  nextPromos,
+                  nextProducts,
+                  nextCategories,
+                )
+
+                setActiveMenuSlug(normalizedProfile.slug)
+                setRestaurantProfile(menuState.profile)
+                setProducts(menuState.products)
+                setPromoItems(menuState.promoItems)
+                setCategories(menuState.categories)
+                loadedMenuSlugRef.current = normalizedProfile.slug
+                menuBlockingLoadCompletedRef.current = true
+                setMenuLoadState({ failed: false, loading: false, slug: normalizedProfile.slug })
+                adminRouteExitAllowedRef.current = true
+                setAdminAccessVerified(false)
+                showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
+                pushToast({
+                  title: 'Salvando alteracoes',
+                  message: 'O cardapio ja foi atualizado nesta tela. Publicando na nuvem...',
+                  placement: 'center',
+                  duration: 2600,
+                })
+
                 try {
-                  const menuState = buildMenuStateSnapshot(
-                    normalizedProfile,
-                    nextPromos,
-                    nextProducts,
-                    nextCategories,
-                  )
                   const published = await saveMenuState(
                     activeRestaurantId,
                     normalizedProfile.slug,
@@ -1654,21 +1716,12 @@ function App() {
                   )
 
                   if (!published) throw new Error('Firebase menu publication failed')
-
-                  setActiveMenuSlug(normalizedProfile.slug)
-                  setRestaurantProfile(menuState.profile)
-                  setProducts(menuState.products)
-                  setPromoItems(menuState.promoItems)
-                  setCategories(menuState.categories)
                   pushToast({
                     title: 'Alterações salvas com sucesso',
                     message: 'O cardápio principal já foi atualizado.',
                     placement: 'center',
                   })
-                  adminRouteExitAllowedRef.current = true
-                  setAdminAccessVerified(false)
-                  showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
-                  return
+                  return true
                 } catch {
                   pushToast({
                     title: 'Não foi possível publicar',
@@ -1676,12 +1729,13 @@ function App() {
                     tone: 'error',
                     placement: 'center',
                   })
-                  return
+                  return false
                 }
               }
               adminRouteExitAllowedRef.current = true
               setAdminAccessVerified(false)
               showScreen('menu')
+              return true
             }}
             onRemoveProduct={removeProduct}
             onToggleProductActive={toggleProductActive}
@@ -1696,6 +1750,7 @@ function App() {
             cartItems={cartItems}
             cartTotal={cartTotal}
             orderSent={orderSent}
+            pixFeePercent={pixCardPaymentFeePercent}
             restaurantProfile={restaurantProfile}
             tableNumber={tableNumber}
             onBack={() => {
@@ -1730,14 +1785,16 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
       role="status"
       aria-live="polite"
       aria-label={failed ? 'Cardapio indisponivel' : 'Carregando cardapio'}
-      className="grid h-full place-items-center bg-white px-8 text-center text-slate-950"
+      className="grid h-full place-items-center bg-white px-8 text-center text-[#43160f]"
     >
       <div className="grid max-w-[280px] justify-items-center gap-5">
-        <div className="grid size-16 place-items-center rounded-full bg-slate-950 text-white shadow-lg shadow-slate-200">
+        <div className="grid size-20 place-items-center rounded-full bg-[#43160f] text-white shadow-lg shadow-[#43160f]/15">
           {failed ? (
             <ReceiptText size={30} strokeWidth={1.9} />
           ) : (
-            <span className="size-8 animate-spin rounded-full border-[3px] border-white/30 border-t-white" aria-hidden="true" />
+            <span className="grid size-14 place-items-center rounded-full border border-white/25 font-montserrat text-[11px] font-black tracking-[0.16em]">
+              TOKKA
+            </span>
           )}
         </div>
         <div>
@@ -1750,11 +1807,16 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
               : 'Preparando as informacoes do restaurante.'}
           </p>
         </div>
+        {!failed && (
+          <span className="h-1.5 w-28 overflow-hidden rounded-full bg-[#eadfd9]" aria-hidden="true">
+            <span className="block h-full w-1/2 animate-pulse rounded-full bg-[#43160f]" />
+          </span>
+        )}
         {failed && (
           <button
             type="button"
             onClick={onRetry}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-slate-950 px-5 text-sm font-black text-white transition active:scale-95"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#43160f] px-5 text-sm font-black text-white transition active:scale-95"
           >
             <RefreshCw size={17} strokeWidth={2.5} />
             Tentar novamente
@@ -2044,14 +2106,23 @@ function MenuScreen({
   const categoryProducts = visibleProducts.filter((product) => product.category === activeCategory)
   const categorizedProducts = visibleProducts.filter((product) => categoryItems.some((category) => category.id === product.category))
   const featuredProducts = [...categorizedProducts]
+    .filter((product) => product.featured !== false)
     .sort((first, second) => Number(second.featured === true) - Number(first.featured === true) || (first.featuredOrder ?? 999) - (second.featuredOrder ?? 999) || (second.featuredAt || 0) - (first.featuredAt || 0))
     .slice(0, menuMode === 'simplificado' ? 4 : 5)
   const primaryProducts = isSearching ? visibleProducts : featuredProducts
   const selectedDailySource = menuCategorySelected && categoryProducts.length ? categoryProducts : categorizedProducts
   const dailyProducts = selectedDailySource
     .filter((product) => !featuredProducts.some((featuredProduct) => featuredProduct.id === product.id))
+    .filter((product) => product.daily !== false)
     .sort((first, second) => Number(second.daily === true) - Number(first.daily === true) || (second.dailyAt || 0) - (first.dailyAt || 0))
     .slice(0, menuMode === 'simplificado' ? 2 : 4)
+  const highlightedProductIds = new Set([
+    ...primaryProducts.map((product) => product.id),
+    ...dailyProducts.map((product) => product.id),
+  ])
+  const completeMenuProducts = isSearching
+    ? []
+    : categorizedProducts.filter((product) => !highlightedProductIds.has(product.id))
   const menuSectionTitle = isSearching
     ? productSearch.mode === 'similar'
       ? 'SIMILARES'
@@ -2239,6 +2310,27 @@ function MenuScreen({
 
             <div className={productLayout === 'grade' ? 'relative left-1/2 mt-2 grid w-[calc(100%+64px)] -translate-x-1/2 grid-cols-2 gap-2.5 px-2' : 'relative left-1/2 mt-2 w-[calc(100%+64px)] -translate-x-1/2 space-y-2.5 px-2'}>
               {dailyProducts.map((product) => (
+                productLayout === 'grade' ? (
+                  <MenuProductGridCard key={product.id} product={product} onOpen={() => onOpenProduct(product)} />
+                ) : (
+                  <MenuProductCard key={product.id} product={product} onOpen={() => onOpenProduct(product)} />
+                )
+              ))}
+            </div>
+          </>
+        )}
+
+        {!isSearching && completeMenuProducts.length > 0 && (
+          <>
+            <div className="mt-4 flex items-center justify-between">
+              <h2 className="text-[15px] font-medium">CARDAPIO COMPLETO</h2>
+              <span className="text-[11px] font-semibold text-[#a98272]">
+                {completeMenuProducts.length} itens
+              </span>
+            </div>
+
+            <div className={productLayout === 'grade' ? 'relative left-1/2 mt-2 grid w-[calc(100%+64px)] -translate-x-1/2 grid-cols-2 gap-2.5 px-2' : 'relative left-1/2 mt-2 w-[calc(100%+64px)] -translate-x-1/2 space-y-2.5 px-2'}>
+              {completeMenuProducts.map((product) => (
                 productLayout === 'grade' ? (
                   <MenuProductGridCard key={product.id} product={product} onOpen={() => onOpenProduct(product)} />
                 ) : (
@@ -2667,15 +2759,80 @@ function PromotionScreen({ promo, restaurantProfile = defaultRestaurantProfile, 
 }
 
 function ProductImageGallery({ product }) {
+  const images = getProductImages(product, fallbackImages[product.category] || categoriaFrutosDoMar)
+  const [activeImageIndex, setActiveImageIndex] = useState(0)
+  const galleryRef = useRef(null)
+  const hasMultipleImages = images.length > 1
+
+  useEffect(() => {
+    setActiveImageIndex(0)
+  }, [product.id])
+
+  function showImage(index) {
+    const nextIndex = (index + images.length) % images.length
+    const target = galleryRef.current?.children?.[nextIndex]
+
+    target?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' })
+    setActiveImageIndex(nextIndex)
+  }
+
+  function updateActiveImage(event) {
+    const container = event.currentTarget
+    const width = container.clientWidth || 1
+    setActiveImageIndex(Math.min(images.length - 1, Math.max(0, Math.round(container.scrollLeft / width))))
+  }
+
   return (
-    <div className="brand-photo-frame mx-1 aspect-[1.48] overflow-hidden rounded-lg bg-[#4b160e] p-2" aria-label="Foto do prato">
-      <ImageWithFallback
-        src={product.image}
-        fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
-        alt={product.name}
-        className="size-full rounded-md object-cover"
-        draggable="false"
-      />
+    <div className="brand-photo-frame relative mx-1 aspect-[1.48] overflow-hidden rounded-lg bg-[#4b160e] p-2" aria-label="Fotos do prato">
+      <div
+        ref={galleryRef}
+        onScroll={updateActiveImage}
+        className="flex size-full snap-x snap-mandatory overflow-x-auto rounded-md [scrollbar-width:none] [touch-action:pan-x_pan-y_pinch-zoom]"
+      >
+        {images.map((image, index) => (
+          <ImageWithFallback
+            key={`${product.id}-image-${index}`}
+            src={image}
+            fallbackSrc={fallbackImages[product.category] || categoriaFrutosDoMar}
+            alt={index === 0 ? product.name : `${product.name} foto ${index + 1}`}
+            className="size-full shrink-0 snap-start object-cover"
+            draggable="false"
+          />
+        ))}
+      </div>
+
+      {hasMultipleImages && (
+        <>
+          <button
+            type="button"
+            onClick={() => showImage(activeImageIndex - 1)}
+            className="absolute left-3 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#43160f] shadow-md"
+            aria-label="Foto anterior"
+          >
+            <ArrowLeft size={15} strokeWidth={2.4} />
+          </button>
+          <button
+            type="button"
+            onClick={() => showImage(activeImageIndex + 1)}
+            className="absolute right-3 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#43160f] shadow-md"
+            aria-label="Proxima foto"
+          >
+            <ArrowRight size={15} strokeWidth={2.4} />
+          </button>
+          <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5 rounded-full bg-black/22 px-2 py-1">
+            {images.map((image, index) => (
+              <button
+                type="button"
+                key={`${image}-${index}`}
+                onClick={() => showImage(index)}
+                aria-label={`Mostrar foto ${index + 1}`}
+                aria-current={activeImageIndex === index ? 'true' : undefined}
+                className={`size-1.5 rounded-full transition ${activeImageIndex === index ? 'w-4 bg-white' : 'bg-white/55'}`}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -3075,16 +3232,21 @@ function ToastStack({ toasts, onDismiss }) {
     <div className={`pointer-events-none fixed left-1/2 z-[140] grid w-[calc(100vw-40px)] max-w-[360px] -translate-x-1/2 gap-2 ${
       centered ? 'top-1/2 -translate-y-1/2' : 'top-4'
     }`}>
-      {toasts.map((toast) => (
+      {toasts.map((toast) => {
+        const toastCentered = toast.placement === 'center'
+
+        return (
         <article
           key={toast.id}
           role="status"
-          className={`pointer-events-auto grid grid-cols-[34px_1fr_auto] items-start gap-3 rounded-xl border px-3 py-3 shadow-2xl shadow-black/15 transition duration-700 ease-out ${
+          className={`pointer-events-auto grid items-start gap-3 rounded-xl border px-3 py-3 shadow-2xl shadow-black/15 transition duration-700 ease-out ${
+            toastCentered ? 'relative grid-cols-1 justify-items-center px-5 text-center' : 'grid-cols-[34px_1fr_auto]'
+          } ${
             toneClasses[toast.tone] ?? toneClasses.success
           }`}
         >
           <span
-            className={`mt-0.5 grid size-8 place-items-center rounded-full ${
+            className={`${toastCentered ? '' : 'mt-0.5'} grid size-8 place-items-center rounded-full ${
               iconClasses[toast.tone] ?? iconClasses.success
             }`}
           >
@@ -3100,12 +3262,13 @@ function ToastStack({ toasts, onDismiss }) {
             type="button"
             onClick={() => onDismiss(toast.id)}
             aria-label="Fechar notificacao"
-            className="grid size-7 place-items-center rounded-full text-current opacity-50 transition hover:bg-black/5 hover:opacity-90"
+            className={`${toastCentered ? 'absolute right-2 top-2' : ''} grid size-7 place-items-center rounded-full text-current opacity-50 transition hover:bg-black/5 hover:opacity-90`}
           >
             <X size={15} strokeWidth={2.5} />
           </button>
         </article>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -3509,6 +3672,7 @@ function buildAdminProductDraft(product, fallbackCategory = 'frutos-do-mar') {
     category,
     description: product?.description ?? '',
     image: product?.image ?? fallbackImages[category],
+    images: product ? getProductImages(product, fallbackImages[category]) : [],
     tags: (product?.tags ?? []).filter((tag) =>
       allergenOptions.some((allergen) => normalizeText(allergen.id) === normalizeText(tag)),
     ),
@@ -3535,6 +3699,10 @@ function buildAdminProductPayload(draft, currentProduct) {
     }
   })
   const price = options[0]?.price || currentProduct?.price || 0
+  const images = uniqueImageSources([
+    draft.image || fallbackImages[draft.category],
+    ...(draft.images ?? []),
+  ]).filter(Boolean)
 
   return {
     ...(currentProduct ?? {}),
@@ -3542,16 +3710,30 @@ function buildAdminProductPayload(draft, currentProduct) {
     category: draft.category,
     name: draft.name.trim(),
     price,
-    image: draft.image || fallbackImages[draft.category],
+    image: images[0] || fallbackImages[draft.category],
+    images,
     badge: currentProduct?.badge ?? 'Admin',
     badgeTone: currentProduct?.badgeTone ?? 'border-slate-200 bg-white text-slate-600',
     badgeIcon: currentProduct?.badgeIcon ?? Save,
     badgeIconTone: currentProduct?.badgeIconTone ?? 'text-slate-600',
-    description: draft.description.trim() || 'Item cadastrado pelo administrador do cardápio.',
+    description: draft.description.trim(),
     tags: draft.tags,
     options,
     active: currentProduct?.active !== false,
   }
+}
+
+function getProductImages(product, fallbackImage = '') {
+  const images = uniqueImageSources([
+    product?.image,
+    ...(Array.isArray(product?.images) ? product.images : []),
+  ]).filter(Boolean)
+
+  return images.length ? images : [fallbackImage].filter(Boolean)
+}
+
+function uniqueImageSources(sources = []) {
+  return [...new Set(sources.filter(Boolean))]
 }
 
 function parseAdminPrice(value) {
@@ -3589,6 +3771,7 @@ function getAllergenIcon(label) {
 }
 
 function AdminMenuEditor({
+  analyticsSummary,
   categories,
   exitRequestId = 0,
   products,
@@ -3614,6 +3797,7 @@ function AdminMenuEditor({
   const [editingCategoryId, setEditingCategoryId] = useState('')
   const [productReturnView, setProductReturnView] = useState('home')
   const [productSelectionTarget, setProductSelectionTarget] = useState('')
+  const [capturedMenuPages, setCapturedMenuPages] = useState([])
   const [draggedFeaturedId, setDraggedFeaturedId] = useState('')
   const [adminPromoIndex, setAdminPromoIndex] = useState(0)
   const adminPromoScrollRef = useRef(null)
@@ -3815,6 +3999,24 @@ function AdminMenuEditor({
     setEditorView('home')
   }
 
+  function addCapturedMenuPages(pages) {
+    setCapturedMenuPages((currentPages) => [...currentPages, ...pages])
+  }
+
+  function removeCapturedMenuPage(pageId) {
+    setCapturedMenuPages((pages) => pages.filter((page) => page.id !== pageId))
+  }
+
+  function removeProductFromSection(productId, section) {
+    setEditorProducts((items) => items.map((item) => {
+      if (item.id !== productId) return item
+
+      return section === 'featured'
+        ? { ...item, featured: false, featuredOrder: null, featuredAt: null }
+        : { ...item, daily: false, dailyAt: null }
+    }))
+  }
+
   function editCategory(category) {
     setEditingCategoryId(category.id)
     setEditorView('category-edit')
@@ -3925,10 +4127,12 @@ function AdminMenuEditor({
     editorCategories.find((category) => category.id === editingCategoryId) ?? editorCategories[0] ?? categories[0]
   const categorizedEditorProducts = editorProducts.filter((product) => editorCategories.some((category) => category.id === product.category))
   const adminFeaturedProducts = [...categorizedEditorProducts]
+    .filter((product) => product.featured !== false)
     .sort((first, second) => Number(second.featured === true) - Number(first.featured === true) || (first.featuredOrder ?? 999) - (second.featuredOrder ?? 999) || (second.featuredAt || 0) - (first.featuredAt || 0))
     .slice(0, 5)
   const adminDailyProducts = [...categorizedEditorProducts]
     .filter((product) => !adminFeaturedProducts.some((featuredProduct) => featuredProduct.id === product.id))
+    .filter((product) => product.daily !== false)
     .sort((first, second) => Number(second.daily === true) - Number(first.daily === true) || (second.dailyAt || 0) - (first.dailyAt || 0))
     .slice(0, 4)
   const deleteDialog = pendingDelete && (
@@ -4021,9 +4225,37 @@ function AdminMenuEditor({
     )
   }
 
+  if (editorView === 'capture-menu') {
+    return (
+      <AdminMenuCaptureScreen
+        pages={capturedMenuPages}
+        restaurantProfile={editorProfile}
+        onAddPages={addCapturedMenuPages}
+        onBack={() => setEditorView('home')}
+        onContinue={() => setEditorView('home')}
+        onRemovePage={removeCapturedMenuPage}
+        onShowAdd={() => setEditorView('home')}
+        onShowStats={() => setEditorView('stats')}
+      />
+    )
+  }
+
+  if (editorView === 'stats') {
+    return (
+      <AdminMenuStatsScreen
+        analyticsSummary={analyticsSummary}
+        products={editorProducts}
+        restaurantProfile={editorProfile}
+        onBack={() => setEditorView('home')}
+        onShowAdd={() => setEditorView('home')}
+        onShowCapture={() => setEditorView('capture-menu')}
+      />
+    )
+  }
+
   return (
     <section
-      className="relative h-full overflow-y-auto overflow-x-hidden bg-[var(--brand-surface)] pb-8 text-[var(--brand-primary)]"
+      className="relative h-full overflow-y-auto overflow-x-hidden bg-[var(--brand-surface)] pb-28 text-[var(--brand-primary)]"
       style={buildThemeStyle(editorProfile)}
     >
       <div className="relative h-[142px] w-full overflow-visible">
@@ -4275,7 +4507,8 @@ function AdminMenuEditor({
                 <AdminProductEditorCard
                   product={product}
                   onEdit={() => editProduct(product)}
-                  onRemove={() => requestRemoveProduct(product)}
+                  onRemove={() => removeProductFromSection(product.id, 'featured')}
+                  removeLabel="Remover"
                   onToggle={() => toggleEditorProduct(product.id)}
                 />
               </div>
@@ -4290,7 +4523,8 @@ function AdminMenuEditor({
               key={product.id}
               product={product}
               onEdit={() => editProduct(product)}
-              onRemove={() => requestRemoveProduct(product)}
+              onRemove={() => removeProductFromSection(product.id, 'daily')}
+              removeLabel="Remover"
               onToggle={() => toggleEditorProduct(product.id)}
             />
           ))}
@@ -4349,7 +4583,387 @@ function AdminMenuEditor({
         />
       )}
       {deleteDialog}
+      <AdminSpecialBottomNav
+        active="add"
+        onShowAdd={() => setEditorView('home')}
+        onShowCapture={() => setEditorView('capture-menu')}
+        onShowStats={() => setEditorView('stats')}
+      />
     </section>
+  )
+}
+
+function AdminMenuCaptureScreen({
+  pages,
+  restaurantProfile = defaultRestaurantProfile,
+  onAddPages,
+  onBack,
+  onContinue,
+  onRemovePage,
+  onShowAdd,
+  onShowStats,
+}) {
+  const galleryInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
+  const [uploading, setUploading] = useState(false)
+  const hasPages = pages.length > 0
+
+  function readPages(event) {
+    const files = [...(event.target.files ?? [])]
+    if (!files.length) return
+
+    let pendingCount = files.length
+    setUploading(true)
+
+    files.forEach((file) => {
+      readAdminImageFile(
+        file,
+        (imageUrl) => {
+          onAddPages([{
+            id: `menu-page-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            image: imageUrl,
+            status: 'ok',
+          }])
+
+          pendingCount -= 1
+          if (pendingCount <= 0) setUploading(false)
+        },
+        { maxWidth: 1200, maxHeight: 1600, quality: 0.82 },
+      )
+    })
+
+    event.target.value = ''
+  }
+
+  return (
+    <section className="relative h-full overflow-y-auto overflow-x-hidden bg-white pb-28 text-[#4b160e]" style={buildThemeStyle(restaurantProfile)}>
+      <AdminSpecialHeader title="CADASTRAR CARDAPIO" restaurantProfile={restaurantProfile} onBack={onBack} onSettings={onShowAdd} />
+
+      <div className="px-8 pt-[70px]">
+        <h1 data-screen-title="true" tabIndex={-1} className="text-center text-[15px] font-medium tracking-[0.02em] outline-none">
+          CADASTRAR CARDAPIO
+        </h1>
+        {!hasPages && (
+          <p className="mx-auto mt-6 max-w-[310px] text-center text-[12px] font-medium leading-5 text-[#4b302a]">
+            Envie fotos do seu cardapio, para que nossa IA faca a leitura e cadastre os itens automaticamente. Apos cadastrado, confirme nome, descricao, e preco dos produtos.
+          </p>
+        )}
+
+        <AdminCaptureUploadBox
+          compact={hasPages}
+          uploading={uploading}
+          onOpenCamera={() => cameraInputRef.current?.click()}
+          onOpenGallery={() => galleryInputRef.current?.click()}
+        />
+
+        <input ref={galleryInputRef} type="file" accept="image/*" multiple className="sr-only" onChange={readPages} />
+        <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={readPages} />
+
+        {hasPages ? (
+          <>
+            <div className="mt-6 flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-[13px] font-black uppercase tracking-wide text-[#4b160e]">Paginas enviadas</h2>
+                <p className="mt-1 text-[10px] font-medium text-[#8f746d]">Revise as imagens antes de concluir</p>
+              </div>
+              <span className="text-[10px] font-medium text-[#8f746d]">{pages.length} de 3 paginas</span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2.5">
+              {pages.map((page, index) => (
+                <AdminCapturedPageCard key={page.id} page={page} index={index} onRemove={() => onRemovePage(page.id)} />
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={onContinue}
+              className="mx-auto mt-7 flex h-12 w-[82%] items-center justify-center rounded-full bg-[#5a1b12] text-[13px] font-medium text-white shadow-sm transition active:scale-[0.99]"
+            >
+              Continuar →
+            </button>
+          </>
+        ) : (
+          <section className="mt-6">
+            <h2 className="flex items-center gap-2 text-[15px] font-medium text-[#6b433a]">
+              <BadgePlus size={17} strokeWidth={1.8} />
+              Recomendacoes para melhor leitura
+            </h2>
+            <div className="mt-3 space-y-2 text-[12px] font-medium leading-4 text-[#4b302a]">
+              {[
+                'Fotografe em um local bem iluminado',
+                'Evite sombras e reflexos',
+                'Capture todas as paginas do seu cardapio',
+                'Mantenha a imagem nitida e em foco',
+              ].map((item) => (
+                <p key={item} className="flex items-start gap-2">
+                  <CircleCheck size={13} className="mt-0.5 shrink-0 text-[#8b5a22]" />
+                  {item}
+                </p>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+
+      <AdminSpecialBottomNav
+        active="capture"
+        onShowAdd={onShowAdd}
+        onShowCapture={() => {}}
+        onShowStats={onShowStats}
+      />
+    </section>
+  )
+}
+
+function AdminMenuStatsScreen({
+  analyticsSummary,
+  products,
+  restaurantProfile = defaultRestaurantProfile,
+  onBack,
+  onShowAdd,
+  onShowCapture,
+}) {
+  const [period, setPeriod] = useState('7d')
+  const topSoldProduct = analyticsSummary?.topAddedProduct ?? products[0]
+  const topViewedProduct = analyticsSummary?.topViewedProduct ?? products[1] ?? products[0]
+  const topSoldCategory = analyticsSummary?.topAddedCategory ?? { label: 'Categorias', count: 0, image: categoriaCarnes }
+  const topViewedCategory = analyticsSummary?.topViewedCategory ?? { label: 'Categoria', count: 0, image: categoriaFrutosDoMar }
+  const menuOpens = analyticsSummary?.menuOpens ?? 0
+  const nfcCount = analyticsSummary?.sourceBreakdown?.nfc ?? 0
+  const qrCount = analyticsSummary?.sourceBreakdown?.qr ?? Math.max(0, menuOpens - nfcCount)
+
+  return (
+    <section className="relative h-full overflow-y-auto overflow-x-hidden bg-white pb-28 text-[#4b160e]" style={buildThemeStyle(restaurantProfile)}>
+      <AdminSpecialHeader title="ESTATISTICAS" restaurantProfile={restaurantProfile} onBack={onBack} onSettings={onShowAdd} />
+
+      <div className="px-8 pt-[70px]">
+        <h1 data-screen-title="true" tabIndex={-1} className="text-center text-[15px] font-medium tracking-[0.02em] outline-none">
+          ESTATISTICAS
+        </h1>
+
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[
+            ['today', 'Hoje'],
+            ['7d', '7 dias'],
+            ['30d', '30 dias'],
+          ].map(([id, label]) => (
+            <button
+              type="button"
+              key={id}
+              onClick={() => setPeriod(id)}
+              className={`h-6 rounded-full border text-[10px] font-medium transition ${
+                period === id ? 'border-[#5a1b12] bg-[#5a1b12] text-white' : 'border-[#5a1b12] bg-white text-[#5a1b12]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <section className="mt-4 rounded-xl bg-[#5a1b12] px-4 py-4 text-white">
+          <div className="grid grid-cols-[88px_1fr] gap-4">
+            <div>
+              <p className="text-center text-[28px] font-black leading-none text-[#e7b264]">{menuOpens}</p>
+              <p className="mt-1 text-center text-[9px] font-bold leading-3 text-[#f4d9a5]">Acessos ao cardapio</p>
+              <p className="mt-1 text-center text-[9px] font-bold text-emerald-300">+18% esta semana</p>
+            </div>
+            <div className="grid content-center gap-2">
+              <AdminSourceBar label="NFC" value={nfcCount} maxValue={Math.max(nfcCount, qrCount, 1)} />
+              <AdminSourceBar label="QR Code" value={qrCount} maxValue={Math.max(nfcCount, qrCount, 1)} />
+            </div>
+          </div>
+        </section>
+
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <AdminStatFeatureCard
+            icon={BadgePlus}
+            label="Prato mais vendido"
+            title={topSoldProduct?.name ?? 'Prato'}
+            value={`${analyticsSummary?.topAddedProductCount ?? 0} pedidos`}
+            image={topSoldProduct?.image ?? categoriaFrutosDoMar}
+          />
+          <AdminStatFeatureCard
+            icon={Search}
+            label="Prato mais visualizado"
+            title={topViewedProduct?.name ?? 'Prato'}
+            value={`${analyticsSummary?.topViewedProductCount ?? 0} visualizacoes`}
+            image={topViewedProduct?.image ?? categoriaFrutosDoMar}
+          />
+          <AdminStatFeatureCard
+            icon={BadgePlus}
+            label="Categoria mais vendida"
+            title={topSoldCategory.label}
+            value={`${topSoldCategory.count ?? 0} pedidos`}
+            image={topSoldCategory.image}
+          />
+          <AdminStatFeatureCard
+            icon={Search}
+            label="Categoria mais visualizada"
+            title={topViewedCategory.label}
+            value={`${topViewedCategory.count ?? 0} visualizacoes`}
+            image={topViewedCategory.image}
+          />
+        </div>
+      </div>
+
+      <AdminSpecialBottomNav
+        active="stats"
+        onShowAdd={onShowAdd}
+        onShowCapture={onShowCapture}
+        onShowStats={() => {}}
+      />
+    </section>
+  )
+}
+
+function AdminSpecialHeader({ title, restaurantProfile, onBack, onSettings }) {
+  return (
+    <header className="relative h-[128px]">
+      <ImageWithFallback src={restaurantProfile.cover} fallbackSrc={cocoBackground} alt="" className="h-[92px] w-full object-cover" draggable="false" />
+      <span className="absolute inset-x-0 top-0 h-[92px] bg-black/10" />
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Voltar"
+        className="absolute left-7 top-5 grid size-8 place-items-center rounded-full bg-white/75 text-[#5a1b12] shadow-md ring-1 ring-white/70"
+      >
+        <ArrowLeft size={18} strokeWidth={2.2} />
+      </button>
+      <button
+        type="button"
+        onClick={onSettings}
+        aria-label="Abrir editor"
+        className="absolute right-7 top-5 grid size-8 place-items-center rounded-full bg-white/75 text-[#5a1b12] shadow-md ring-1 ring-white/70"
+      >
+        <Settings size={18} strokeWidth={2} />
+      </button>
+      <ImageWithFallback
+        src={restaurantProfile.logo}
+        fallbackSrc={cocoLogo}
+        alt={restaurantProfile.name}
+        className="brand-logo-frame absolute left-1/2 top-[38px] size-[96px] -translate-x-1/2 rounded-full bg-[#4b160e] object-cover"
+        draggable="false"
+      />
+      <span className="sr-only">{title}</span>
+    </header>
+  )
+}
+
+function AdminCaptureUploadBox({ compact = false, uploading = false, onOpenCamera, onOpenGallery }) {
+  return (
+    <section className={`mx-auto ${compact ? 'mt-5 max-w-[204px] px-5 py-4' : 'mt-8 max-w-[316px] px-7 py-7'} rounded-lg bg-[#f3e7d6] text-center`}>
+      <div className="grid rounded-lg border border-dashed border-[#9a846f] px-3 py-4">
+        <span className="mx-auto grid size-16 place-items-center rounded-full bg-[#5a1b12] text-white">
+          <Camera size={30} strokeWidth={2.4} />
+        </span>
+        <p className="mt-4 text-[14px] font-medium text-[#4b160e]">
+          {uploading ? 'Processando fotos...' : 'Tire foto do cardapio'}
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onOpenGallery}
+            className="flex h-9 items-center justify-center gap-2 rounded-md bg-[#5a1b12] px-3 text-[11px] font-medium text-white"
+          >
+            <Clipboard size={14} />
+            Galeria
+          </button>
+          <button
+            type="button"
+            onClick={onOpenCamera}
+            className="flex h-9 items-center justify-center gap-2 rounded-md border border-[#5a1b12] bg-transparent px-3 text-[11px] font-medium text-[#5a1b12]"
+          >
+            <Camera size={14} />
+            Camera
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function AdminCapturedPageCard({ page, index, onRemove }) {
+  return (
+    <article className="relative aspect-[0.76] overflow-hidden rounded-lg border border-[#c5a585] bg-[#f3e7d6] p-1 shadow-sm">
+      <img src={page.image} alt={`Pagina ${index + 1} do cardapio`} className="size-full rounded-md object-cover" draggable="false" />
+      <span className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-sm bg-emerald-500 text-white">
+        <CircleCheck size={13} strokeWidth={3} />
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="absolute right-1.5 bottom-1.5 grid size-6 place-items-center rounded-full bg-white/90 text-red-600 shadow"
+        aria-label="Remover pagina"
+      >
+        <X size={13} strokeWidth={2.7} />
+      </button>
+    </article>
+  )
+}
+
+function AdminSpecialBottomNav({ active, onShowAdd, onShowCapture, onShowStats }) {
+  const items = [
+    { id: 'capture', label: 'Cadastrar cardapio', icon: BadgePlus, onClick: onShowCapture },
+    { id: 'add', label: 'Adicionar', icon: Plus, onClick: onShowAdd, featured: true },
+    { id: 'stats', label: 'Estatisticas', icon: BarChart3, onClick: onShowStats },
+  ]
+
+  return (
+    <nav className="fixed bottom-[calc(16px+env(safe-area-inset-bottom))] left-1/2 z-[190] grid h-[58px] w-[calc(100%-64px)] max-w-[330px] -translate-x-1/2 grid-cols-3 items-center rounded-full border border-[#5a1b12] bg-white px-3 shadow-lg shadow-[#4b160e]/10" aria-label="Navegacao administrativa">
+      {items.map(({ id, label, icon: Icon, onClick, featured }) => {
+        const selected = active === id
+
+        return (
+          <button
+            type="button"
+            key={id}
+            onClick={onClick}
+            aria-current={selected ? 'page' : undefined}
+            className={`grid justify-items-center gap-0.5 text-[8px] font-black leading-none transition active:scale-95 ${
+              selected ? 'text-[#5a1b12]' : 'text-[#7d5b52]'
+            }`}
+          >
+            <span className={`${featured ? 'grid size-8 place-items-center rounded-full bg-[#d7a957] text-white' : 'text-[#5a1b12]'}`}>
+              <Icon size={featured ? 18 : 20} strokeWidth={featured ? 2.4 : 2.1} />
+            </span>
+            {label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
+function AdminSourceBar({ label, value, maxValue }) {
+  const width = Math.max(8, Math.round((Number(value || 0) / Math.max(1, maxValue)) * 100))
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-[9px] font-bold text-[#f4d9a5]">
+        <span>{label}</span>
+        <span>{value}</span>
+      </div>
+      <span className="block h-2 overflow-hidden rounded-full bg-white/18">
+        <span className="block h-full rounded-full bg-[#e7b264]" style={{ width: `${width}%` }} />
+      </span>
+    </div>
+  )
+}
+
+function AdminStatFeatureCard({ icon: Icon, label, title, value, image }) {
+  return (
+    <article className="overflow-hidden rounded-md bg-[#f2f2f2] shadow-sm">
+      <div className="flex h-6 items-center justify-center gap-1 bg-[#5a1b12] px-2 text-[8px] font-medium text-[#efcb8d]">
+        <Icon size={10} strokeWidth={2} />
+        {label}
+      </div>
+      <img src={image} alt="" className="h-[58px] w-full object-cover" draggable="false" />
+      <div className="px-2 py-2 text-center">
+        <h3 className="truncate text-[10px] font-black text-[#4b160e]" title={title}>{title}</h3>
+        <p className="mt-0.5 text-[9px] font-medium text-[#6b433a]">{value}</p>
+      </div>
+    </article>
   )
 }
 
@@ -5195,7 +5809,7 @@ function AdminMiniAction({ icon: Icon, label, disabled = false, onClick }) {
   )
 }
 
-function AdminProductEditorCard({ product, onEdit, onRemove, onToggle }) {
+function AdminProductEditorCard({ product, onEdit, onRemove, onToggle, removeLabel = 'Excluir' }) {
   return (
     <article className="grid h-[120px] w-full grid-cols-[1fr_130px] gap-3 overflow-hidden rounded-lg bg-[#f0f0f0] p-3 text-left">
       <div className="flex min-w-0 flex-col overflow-hidden">
@@ -5228,7 +5842,7 @@ function AdminProductEditorCard({ product, onEdit, onRemove, onToggle }) {
             type="button"
             onClick={onRemove}
             className="grid size-7 place-items-center rounded-full bg-white/95 text-slate-600 shadow-sm"
-            aria-label={`Excluir ${product.name}`}
+            aria-label={`${removeLabel} ${product.name}`}
           >
             <Trash2 size={13} strokeWidth={2} className="text-red-600" />
           </button>
@@ -5465,11 +6079,25 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
   const [deleteOptionId, setDeleteOptionId] = useState('')
   const [optionDraft, setOptionDraft] = useState(null)
   const [imageCropSource, setImageCropSource] = useState('')
+  const [galleryUploadPending, setGalleryUploadPending] = useState(false)
   const imageInputRef = useRef(null)
-  const previewImage = draft.image || fallbackImages[draft.category] || categoriaFrutosDoMar
+  const galleryInputRef = useRef(null)
+  const previewImage = draft.image || draft.images?.[0] || fallbackImages[draft.category] || categoriaFrutosDoMar
+  const draftImages = uniqueImageSources([
+    previewImage,
+    ...(draft.images ?? []),
+  ])
 
   function updateDraftField(field, value) {
     setDraft((current) => ({ ...current, [field]: value }))
+  }
+
+  function setMainProductImage(imageUrl) {
+    setDraft((current) => ({
+      ...current,
+      image: imageUrl,
+      images: uniqueImageSources([imageUrl, ...(current.images ?? [])]),
+    }))
   }
 
   function updateProductImage(event) {
@@ -5480,6 +6108,51 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
     reader.onload = () => setImageCropSource(String(reader.result || ''))
     reader.readAsDataURL(file)
     event.target.value = ''
+  }
+
+  function addProductGalleryImages(event) {
+    const files = [...(event.target.files ?? [])]
+    if (!files.length) return
+
+    let pendingCount = files.length
+    setGalleryUploadPending(true)
+
+    files.forEach((file) => {
+      readAdminImageFile(
+        file,
+        (imageUrl) => {
+          setDraft((current) => {
+            const nextImages = uniqueImageSources([...(current.images ?? []), imageUrl])
+
+            return {
+              ...current,
+              image: current.image || imageUrl,
+              images: nextImages,
+            }
+          })
+
+          pendingCount -= 1
+          if (pendingCount <= 0) setGalleryUploadPending(false)
+        },
+        { targetWidth: 480, targetHeight: 480, quality: 0.82 },
+      )
+    })
+
+    event.target.value = ''
+  }
+
+  function removeProductGalleryImage(imageUrl) {
+    setDraft((current) => {
+      const nextImages = (current.images ?? []).filter((image) => image !== imageUrl)
+      const fallbackImage = fallbackImages[current.category] || categoriaFrutosDoMar
+      const nextMainImage = current.image === imageUrl ? nextImages[0] || fallbackImage : current.image
+
+      return {
+        ...current,
+        image: nextMainImage,
+        images: nextImages,
+      }
+    })
   }
 
   function toggleTag(tag) {
@@ -5574,6 +6247,54 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
         <p className="mt-1.5 text-[10px] font-normal leading-4 text-[#8f746d]">
           Para melhor definição, envie uma imagem quadrada de 480 × 480 px.
         </p>
+
+        <div className="mt-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[12px] font-bold text-[#6b433a]">Fotos do prato</span>
+            <button
+              type="button"
+              onClick={() => galleryInputRef.current?.click()}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-[#b7928b] px-3 text-[11px] font-medium text-[#6b433a]"
+            >
+              <Plus size={14} />
+              {galleryUploadPending ? 'Adicionando...' : 'Adicionar foto'}
+            </button>
+            <input
+              ref={galleryInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              onChange={addProductGalleryImages}
+            />
+          </div>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [touch-action:pan-x_pan-y_pinch-zoom]">
+            {draftImages.map((imageUrl, index) => (
+              <div key={`${imageUrl}-${index}`} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-[#eadfd9] bg-slate-100">
+                <img src={imageUrl} alt="" className="size-full object-cover" draggable="false" />
+                <button
+                  type="button"
+                  onClick={() => setMainProductImage(imageUrl)}
+                  className={`absolute bottom-1 left-1 rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase shadow ${
+                    imageUrl === previewImage ? 'bg-[#4b160e] text-white' : 'bg-white/95 text-[#4b160e]'
+                  }`}
+                >
+                  {imageUrl === previewImage ? 'Principal' : 'Usar'}
+                </button>
+                {draftImages.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeProductGalleryImage(imageUrl)}
+                    className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-white/95 text-red-600 shadow"
+                    aria-label="Remover foto"
+                  >
+                    <X size={12} strokeWidth={2.7} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
 
         <label className="mt-2.5 block text-[13px] font-bold text-[#6b433a]">
           Nome do prato
@@ -5697,7 +6418,7 @@ function AdminProductEditScreen({ categories, fallbackCategory, product, restaur
           quality={0.82}
           onCancel={() => setImageCropSource('')}
           onConfirm={(imageUrl) => {
-            updateDraftField('image', imageUrl)
+            setMainProductImage(imageUrl)
             setImageCropSource('')
           }}
         />
@@ -6325,6 +7046,7 @@ function OrderScreen({
   cartItems,
   cartTotal,
   orderSent,
+  pixFeePercent = pixCardPaymentFeePercent,
   restaurantProfile = defaultRestaurantProfile,
   tableNumber,
   onBack,
@@ -6337,6 +7059,9 @@ function OrderScreen({
   const [customerName, setCustomerName] = useState('')
   const [serviceType, setServiceType] = useState('mesa')
   const [observations, setObservations] = useState('')
+  const pixFeeRate = Math.max(0, Number(pixFeePercent) || 0)
+  const pixFeeValue = cartTotal * (pixFeeRate / 100)
+  const pixTotal = cartTotal + pixFeeValue
 
   return (
     <section className="h-full overflow-y-auto overflow-x-hidden bg-white pb-8 text-[#4b160e]">
@@ -6442,6 +7167,22 @@ function OrderScreen({
                 </span>
                 <p className="text-[17px] font-bold">{formatCurrency(cartTotal)}</p>
               </div>
+              {cartItems.length > 0 && (
+                <div className="mt-2 rounded-lg border border-[#eadfd9] bg-[#fbf7f2] px-3 py-2 text-[11px] font-semibold leading-4 text-[#6b433a]">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Pix pelo cardapio</span>
+                    <strong>{pixFeeRate.toFixed(2).replace('.', ',')}%</strong>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3 text-[#8b6d66]">
+                    <span>Taxa</span>
+                    <span>{formatCurrency(pixFeeValue)}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3 text-[#4b160e]">
+                    <span>Total com Pix</span>
+                    <strong>{formatCurrency(pixTotal)}</strong>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => onSendOrder({ customerName, serviceType, paymentType: 'garcom', observations })}
@@ -6688,6 +7429,37 @@ function buildAnalyticsSummary(events, products, session) {
   const menuOpens = Math.max(eventCount('menu_open'), 1)
   const vezzClicks = eventCount('vezz_click')
   const orderEvents = events.filter((event) => event.event === 'order_sent')
+  const sourceBreakdown = events.reduce((breakdown, event) => {
+    const source = event.source || 'direct'
+    return {
+      ...breakdown,
+      [source]: (breakdown[source] ?? 0) + 1,
+    }
+  }, {})
+  const countBy = (eventName, key) => events
+    .filter((event) => event.event === eventName && event[key])
+    .reduce((counts, event) => ({
+      ...counts,
+      [event[key]]: (counts[event[key]] ?? 0) + 1,
+    }), {})
+  const topEntry = (counts) => Object.entries(counts)
+    .sort((first, second) => second[1] - first[1])[0] ?? ['', 0]
+  const [topViewedProductId, topViewedProductCount] = topEntry(countBy('product_view', 'productId'))
+  const [topAddedProductId, topAddedProductCount] = topEntry(countBy('product_add', 'productId'))
+  const [topViewedCategoryId, topViewedCategoryCount] = topEntry(countBy('product_view', 'category'))
+  const [topAddedCategoryId, topAddedCategoryCount] = topEntry(countBy('product_add', 'category'))
+  const topViewedProduct = products.find((product) => product.id === topViewedProductId) ?? products[0] ?? null
+  const topAddedProduct = products.find((product) => product.id === topAddedProductId) ?? topViewedProduct
+  const findCategorySummary = (categoryId, count) => {
+    const category = categories.find((item) => item.id === categoryId)
+
+    return {
+      id: categoryId || category?.id || '',
+      label: category?.label ?? categoryId ?? 'Categoria',
+      image: category?.image ?? fallbackImages[categoryId] ?? categoriaFrutosDoMar,
+      count,
+    }
+  }
   const hourlyCounts = Array.from({ length: 6 }, (_, index) => {
     const hour = 18 + index
     const count = events.filter((event) => {
@@ -6705,6 +7477,17 @@ function buildAnalyticsSummary(events, products, session) {
     uniqueSessions: new Set(events.map((event) => event.sessionId)).size || 1,
     productViews: eventCount('product_view'),
     productAdds: eventCount('product_add'),
+    sourceBreakdown: {
+      ...sourceBreakdown,
+      qr: sourceBreakdown.qr ?? sourceBreakdown.direct ?? 0,
+      nfc: sourceBreakdown.nfc ?? 0,
+    },
+    topViewedProduct,
+    topViewedProductCount,
+    topAddedProduct,
+    topAddedProductCount,
+    topViewedCategory: findCategorySummary(topViewedCategoryId, topViewedCategoryCount),
+    topAddedCategory: findCategorySummary(topAddedCategoryId, topAddedCategoryCount),
     activeProducts: products.filter((product) => product.active !== false).length,
     totalProducts: products.length,
     ordersSent: orderEvents.length,
@@ -6916,7 +7699,7 @@ function getAdminPrincipalHash() {
 }
 
 function buildPublicMenuUrl(slugOrName = defaultRestaurantProfile.slug) {
-  const url = new URL(window.location.href)
+  const url = new URL(window.location.origin + window.location.pathname)
 
   url.hash = getPublicMenuHash(slugOrName)
   return url.toString()
@@ -7074,6 +7857,9 @@ function serializeProducts(items = baseProducts) {
 
     delete serializableItem.badgeIcon
     serializableItem.image = serializeImageSource(serializableItem.image)
+    serializableItem.images = Array.isArray(serializableItem.images)
+      ? serializableItem.images.map(serializeImageSource)
+      : []
 
     return serializableItem
   })
@@ -7105,6 +7891,9 @@ function hydrateProducts(items) {
       ...item,
       category,
       image: hydrateImageSource(item.image, baseProduct?.image || fallbackImages[category] || categoriaFrutosDoMar),
+      images: Array.isArray(item.images)
+        ? item.images.map((image) => hydrateImageSource(image, baseProduct?.image || fallbackImages[category] || categoriaFrutosDoMar))
+        : getProductImages(baseProduct, fallbackImages[category] || categoriaFrutosDoMar),
       tags: Array.isArray(item.tags) ? item.tags : baseProduct?.tags ?? [],
       options: Array.isArray(item.options) ? item.options : baseProduct?.options ?? [],
       active: item.active !== false,
@@ -7134,6 +7923,20 @@ function getMenuSlugFromHash(hashValue = window.location.hash) {
 
   if (hash.startsWith('#cardapio-')) return slugifyMenuName(hash.replace('#cardapio-', ''))
   if (hash.startsWith('#menu=')) return slugifyMenuName(hash.replace('#menu=', ''))
+
+  return ''
+}
+
+function getCanonicalPublicMenuHash(hashValue = window.location.hash, fallbackSlug = defaultRestaurantProfile.slug) {
+  const hash = String(hashValue ?? '')
+
+  if (hash === '#menu' || hash === '#entrada') {
+    return `#${getPublicMenuHash(fallbackSlug)}`
+  }
+
+  if (hash.startsWith('#menu=')) {
+    return `#${getPublicMenuHash(hash.replace('#menu=', '') || fallbackSlug)}`
+  }
 
   return ''
 }
@@ -7188,15 +7991,20 @@ function getInitialAdminTab() {
   return validTabs.includes(tab) ? tab : 'cardapio'
 }
 
-function getProductFromHash() {
-  const productId = window.location.hash.replace('#produto=', '')
-  return baseProducts.some((product) => product.id === productId)
-    ? productId
-    : baseProducts[0].id
+function getProductIdFromHash(hashValue = window.location.hash) {
+  const hash = String(hashValue ?? '')
+
+  if (!hash.startsWith('#produto=')) return ''
+
+  try {
+    return decodeURIComponent(hash.replace('#produto=', ''))
+  } catch {
+    return hash.replace('#produto=', '')
+  }
 }
 
 function buildNfcUrl(tableNumber, slug = defaultRestaurantProfile.slug) {
-  const url = new URL(window.location.href)
+  const url = new URL(window.location.origin + window.location.pathname)
   url.searchParams.set('mesa', tableNumber)
   url.hash = getPublicMenuHash(slug)
   return url.toString()
