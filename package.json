@@ -11,6 +11,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "eslint .",
+    "test:menu": "node --experimental-vm-modules --test tests/menuPersistence.test.mjs",
     "firebase": "firebase",
     "firebase:login": "firebase login",
     "firebase:logout": "firebase logout",

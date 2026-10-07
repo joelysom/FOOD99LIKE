@@ -89,7 +89,7 @@ import {
   watchAdminSession,
 } from './lib/adminAuth'
 import { persistAnalyticsEvent, persistOrder } from './lib/firebaseEvents'
-import { loadMenuState, readCachedMenuState, resolveRestaurantId, saveMenuState } from './lib/menuPersistence'
+import { readCachedMenuState, resolveRestaurantId, saveMenuState, watchMenuState } from './lib/menuPersistence'
 
 const categories = [
   { id: 'entradas', label: 'Entradas', shortLabel: 'Entradas', iconImage: iconEntradas, image: categoriaEntradas },
@@ -458,13 +458,19 @@ const appAssetUrlToKey = new Map(
 )
 
 function App() {
-  const initialTable = getTableFromUrl()
-  const initialScreen = getInitialScreen()
-  const initialMenuSlug = getMenuSlugFromHash() || defaultRestaurantProfile.slug
-  const initialCachedMenuState = readCachedMenuState(restaurantId, initialMenuSlug)
-  const initialMenuBlockingLoad = shouldBlockCustomMenuPaint(initialMenuSlug, initialCachedMenuState)
-  const initialMenuState = normalizeMenuStateSnapshot(initialCachedMenuState, initialMenuSlug)
-  const [analyticsSession] = useState(() => getAnalyticsSession(initialTable))
+  const [{ initialTable, initialScreen, initialMenuSlug, initialCachedMenuState, initialMenuBlockingLoad, initialMenuState }] = useState(() => {
+    const initialMenuSlug = getMenuSlugFromHash() || defaultRestaurantProfile.slug
+    const initialCachedMenuState = readCachedMenuState(restaurantId, initialMenuSlug)
+    return {
+      initialTable: getTableFromUrl(),
+      initialScreen: getInitialScreen(),
+      initialMenuSlug,
+      initialCachedMenuState,
+      initialMenuBlockingLoad: shouldBlockCustomMenuPaint(initialMenuSlug, initialCachedMenuState),
+      initialMenuState: normalizeMenuStateSnapshot(initialCachedMenuState, initialMenuSlug),
+    }
+  })
+  const [analyticsSession, setAnalyticsSession] = useState(() => getAnalyticsSession(initialTable))
   const [screen, setScreen] = useState(() => initialScreen)
   const [menuMode, setMenuMode] = useState('padrao')
   const [activeCategory, setActiveCategory] = useState(() => getCategoryFromHash() || 'frutos-do-mar')
@@ -514,7 +520,9 @@ function App() {
   const toastTimersRef = useRef(new Map())
   const adminRegistrationPendingRef = useRef(false)
   const initialMenuEventSyncedRef = useRef(false)
-  const menuStateLoadedRef = useRef(false)
+  const menuEditingRef = useRef(false)
+  const menuPublicationRef = useRef(false)
+  const [menuSaving, setMenuSaving] = useState(false)
   const loadedMenuSlugRef = useRef(initialCachedMenuState ? initialMenuSlug : '')
   const menuBlockingLoadCompletedRef = useRef(!initialMenuBlockingLoad)
   const [analyticsEvents, setAnalyticsEvents] = useState(() => {
@@ -659,7 +667,13 @@ function App() {
   }, [activeRestaurantId])
 
   useEffect(() => {
+    menuEditingRef.current = screen === 'admin-cardapio' && adminSession.isAdmin && adminAccessVerified
+  }, [screen, adminSession.isAdmin, adminAccessVerified])
+
+  useEffect(() => {
     let cancelled = false
+    let unsubscribe = () => {}
+    let initialized = false
     const slug = activeMenuSlug || defaultRestaurantProfile.slug
     const cachedState = readCachedMenuState(restaurantId, slug)
     const menuAlreadyLoaded = loadedMenuSlugRef.current === slug
@@ -667,19 +681,14 @@ function App() {
       !menuBlockingLoadCompletedRef.current
       && shouldBlockCustomMenuPaint(slug, cachedState, menuAlreadyLoaded)
 
-    menuStateLoadedRef.current = false
     setMenuLoadState({
       failed: false,
       loading: useBlockingLoader,
       slug,
     })
 
-    async function hydrateMenuState() {
-      const resolvedRestaurantId = await resolveRestaurantId(slug, restaurantId)
-      const savedState = await loadMenuState(resolvedRestaurantId, slug)
-
-      if (cancelled) return
-
+    function applyMenuState(savedState, resolvedRestaurantId) {
+      if (cancelled || (initialized && menuEditingRef.current)) return
       if (!savedState && isCustomMenuSlug(slug)) {
         if (loadedMenuSlugRef.current === slug) {
           setMenuLoadState({ failed: false, loading: false, slug })
@@ -688,7 +697,7 @@ function App() {
 
         menuBlockingLoadCompletedRef.current = true
         setActiveRestaurantId(resolvedRestaurantId)
-        analyticsSession.restaurantId = resolvedRestaurantId
+        setAnalyticsSession((session) => session.restaurantId === resolvedRestaurantId ? session : { ...session, restaurantId: resolvedRestaurantId })
         setCart([])
         setMenuLoadState({ failed: useBlockingLoader, loading: false, slug })
         return
@@ -698,10 +707,11 @@ function App() {
       if (cancelled) return
 
       setActiveRestaurantId(resolvedRestaurantId)
-      analyticsSession.restaurantId = resolvedRestaurantId
+      setAnalyticsSession((session) => session.restaurantId === resolvedRestaurantId ? session : { ...session, restaurantId: resolvedRestaurantId })
 
       setRestaurantProfile(nextState.profile)
       setCategories(nextState.categories)
+      setActiveCategory((current) => nextState.categories.some((category) => category.id === current) ? current : nextState.categories[0]?.id ?? '')
       setPromoItems(nextState.promoItems)
       setProducts(nextState.products)
       setSelectedProductId((currentProductId) =>
@@ -709,15 +719,39 @@ function App() {
           ? currentProductId
           : nextState.products[0]?.id ?? '',
       )
-      setCart([])
-      menuStateLoadedRef.current = true
+      if (!initialized && loadedMenuSlugRef.current !== slug) {
+        setCart([])
+      } else {
+        const productsById = new Map(nextState.products.map((product) => [product.id, product]))
+        setCart((items) => items
+          .filter((item) => productsById.has(item.productId) && productsById.get(item.productId).active !== false)
+          .map((item) => {
+            const product = productsById.get(item.productId)
+            const option = product.options?.find((option) => option.id === item.optionId)
+            return {
+              ...item,
+              unitPrice: option?.price ?? product.price,
+              optionLabel: option?.label ?? item.optionLabel,
+              optionDetail: option?.detail ?? item.optionDetail,
+              people: option?.people ?? item.people,
+            }
+          }))
+      }
+      if (
+        (!nextState.products.length && window.location.hash.startsWith('#produto='))
+        || (!nextState.promoItems.length && window.location.hash.startsWith('#promocao='))
+        || (!nextState.categories.length && window.location.hash.startsWith('#categoria='))
+      ) {
+        setScreen('menu')
+        window.history.replaceState(null, '', `#${getPublicMenuHash(slug)}`)
+      }
+      initialized = true
       loadedMenuSlugRef.current = slug
       menuBlockingLoadCompletedRef.current = true
-      void preloadImages([nextState.profile.logo, nextState.profile.cover])
       setMenuLoadState({ failed: false, loading: false, slug })
     }
 
-    hydrateMenuState().catch(() => {
+    function handleLoadError() {
       if (!cancelled) {
         const hasLoadedMenu = loadedMenuSlugRef.current === slug
         menuBlockingLoadCompletedRef.current = true
@@ -727,10 +761,17 @@ function App() {
           slug,
         })
       }
-    })
+    }
+
+    void resolveRestaurantId(slug, restaurantId).then((resolvedRestaurantId) => {
+      if (cancelled) return
+      unsubscribe = watchMenuState(resolvedRestaurantId, slug,
+        (state) => applyMenuState(state, resolvedRestaurantId), handleLoadError)
+    }).catch(handleLoadError)
 
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [activeMenuSlug, menuReloadToken])
 
@@ -1502,7 +1543,10 @@ function App() {
           <EntryScreen restaurantProfile={restaurantProfile} onStart={startMenuMode} />
         )}
 
-        {!menuPlaceholderActive && screen === 'menu' && (
+        {!menuPlaceholderActive && (screen === 'menu'
+          || (screen === 'produto' && !selectedProduct)
+          || (screen === 'promocao' && !selectedPromo)
+          || (screen === 'categoria-pratos' && !categories.length)) && (
           <MenuScreen
             categories={categories}
             products={menuProducts}
@@ -1545,7 +1589,7 @@ function App() {
           />
         )}
 
-        {!menuPlaceholderActive && screen === 'categoria-pratos' && (
+        {!menuPlaceholderActive && screen === 'categoria-pratos' && categories.length > 0 && (
           <CategoryProductsScreen
             category={categories.find((category) => category.id === activeCategory) ?? categories[0]}
             products={menuProducts.filter((product) => product.category === activeCategory)}
@@ -1556,7 +1600,7 @@ function App() {
           />
         )}
 
-        {!menuPlaceholderActive && screen === 'produto' && (
+        {!menuPlaceholderActive && screen === 'produto' && selectedProduct && (
           <ProductScreen
             key={selectedProduct.id}
             product={selectedProduct}
@@ -1588,7 +1632,7 @@ function App() {
           />
         )}
 
-        {!menuPlaceholderActive && screen === 'promocao' && (
+        {!menuPlaceholderActive && screen === 'promocao' && selectedPromo && (
           <PromotionScreen
             promo={selectedPromo}
             restaurantProfile={restaurantProfile}
@@ -1669,6 +1713,7 @@ function App() {
             promoItems={promoItems}
             restaurantProfile={restaurantProfile}
             onUpdateProfile={(nextProfile) => setRestaurantProfile(normalizeRestaurantProfile(nextProfile))}
+            saving={menuSaving}
             onAddAdminItem={addAdminItem}
             onBack={async () => {
               adminRouteExitAllowedRef.current = true
@@ -1677,7 +1722,10 @@ function App() {
               showScreen('menu')
             }}
             onDone={async (nextProfile, editorState = {}) => {
+              if (menuPublicationRef.current) return false
               if (nextProfile) {
+                menuPublicationRef.current = true
+                setMenuSaving(true)
                 const normalizedProfile = normalizeRestaurantProfile(nextProfile)
                 const nextProducts = editorState.products ?? products
                 const nextPromos = editorState.promoItems ?? promoItems
@@ -1689,18 +1737,16 @@ function App() {
                   nextProducts,
                   nextCategories,
                 )
+                const displayState = normalizeMenuStateSnapshot(menuState, normalizedProfile.slug)
 
                 setActiveMenuSlug(normalizedProfile.slug)
-                setRestaurantProfile(menuState.profile)
-                setProducts(menuState.products)
-                setPromoItems(menuState.promoItems)
-                setCategories(menuState.categories)
+                setRestaurantProfile(displayState.profile)
+                setProducts(displayState.products)
+                setPromoItems(displayState.promoItems)
+                setCategories(displayState.categories)
                 loadedMenuSlugRef.current = normalizedProfile.slug
                 menuBlockingLoadCompletedRef.current = true
                 setMenuLoadState({ failed: false, loading: false, slug: normalizedProfile.slug })
-                adminRouteExitAllowedRef.current = true
-                setAdminAccessVerified(false)
-                showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
                 pushToast({
                   title: 'Salvando alteracoes',
                   message: 'O cardapio ja foi atualizado nesta tela. Publicando na nuvem...',
@@ -1717,6 +1763,9 @@ function App() {
                   )
 
                   if (!published) throw new Error('Firebase menu publication failed')
+                  adminRouteExitAllowedRef.current = true
+                  setAdminAccessVerified(false)
+                  showScreen('menu', getPublicMenuHash(normalizedProfile.slug))
                   pushToast({
                     title: 'Alterações salvas com sucesso',
                     message: 'O cardápio principal já foi atualizado.',
@@ -1731,6 +1780,9 @@ function App() {
                     placement: 'center',
                   })
                   return false
+                } finally {
+                  menuPublicationRef.current = false
+                  setMenuSaving(false)
                 }
               }
               adminRouteExitAllowedRef.current = true
@@ -1827,18 +1879,6 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
         )}
       </div>
     </section>
-  )
-}
-
-function preloadImages(sources = []) {
-  return Promise.all(
-    sources.filter(Boolean).map((source) => new Promise((resolve) => {
-      const image = new Image()
-      image.onload = resolve
-      image.onerror = resolve
-      image.src = source
-      if (image.complete) resolve()
-    })),
   )
 }
 
@@ -3780,6 +3820,7 @@ function AdminMenuEditor({
   products,
   promoItems = promoSlides,
   restaurantProfile = defaultRestaurantProfile,
+  saving = false,
   onUpdateProfile,
   onAddAdminItem,
   onBack,
@@ -3947,6 +3988,8 @@ function AdminMenuEditor({
   }
 
   function saveEditorProfile() {
+    if (saving) return
+    setExitConfirmOpen(false)
     onDone(editorProfile, {
       products: editorProducts,
       promoItems: editorPromos,
@@ -4152,7 +4195,7 @@ function AdminMenuEditor({
       <div className="relative h-full">
         <AdminProductEditScreen
           categories={editorCategories}
-          fallbackCategory={editingCategory.id}
+          fallbackCategory={editingCategory?.id}
           product={editingProduct}
           restaurantProfile={editorProfile}
           onBack={closeProductEditor}
@@ -4258,6 +4301,8 @@ function AdminMenuEditor({
 
   return (
     <section
+      aria-busy={saving}
+      inert={saving ? true : undefined}
       className="relative h-full overflow-y-auto overflow-x-hidden bg-[var(--brand-surface)] pb-28 text-[var(--brand-primary)]"
       style={buildThemeStyle(editorProfile)}
     >
@@ -7831,7 +7876,7 @@ function serializeCategories(items = categories) {
 }
 
 function hydrateCategories(items) {
-  if (!Array.isArray(items) || !items.length) return categories
+  if (!Array.isArray(items)) return categories
 
   return items.map((item) => {
     const baseCategory = categories.find((category) => category.id === item.id)
@@ -7869,7 +7914,7 @@ function serializeProducts(items = baseProducts) {
 }
 
 function hydratePromoItems(items) {
-  if (!Array.isArray(items) || !items.length) return promoSlides
+  if (!Array.isArray(items)) return promoSlides
 
   return items.map((item) => {
     const basePromo = promoSlides.find((promo) => promo.id === item.id)
@@ -7883,7 +7928,7 @@ function hydratePromoItems(items) {
 }
 
 function hydrateProducts(items) {
-  if (!Array.isArray(items) || !items.length) return baseProducts
+  if (!Array.isArray(items)) return baseProducts
 
   return items.map((item) => {
     const baseProduct = baseProducts.find((product) => product.id === item.id)
