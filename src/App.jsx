@@ -61,6 +61,7 @@ import pratoCamaraoCocoBrasil from './assets/images/crops/prato-camarao-coco-bra
 import pratoIscaDePeixe from './assets/images/crops/prato-isca-de-peixe.png'
 import slideVezzBanner from './assets/images/crops/slide-vezz-banner-transparent.png'
 import cocoLogo from './assets/images/hd/logo-coco-bambu@4x.png'
+import tokkaLogo from './assets/TOKKA-LOGO.jpg'
 import iconBebidas from './assets/icons/icon bebidas.png'
 import iconCarnes from './assets/icons/icon carne.png'
 import iconEntradas from './assets/icons/icon entrada.png'
@@ -1784,39 +1785,46 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
       aria-busy={!failed}
       role="status"
       aria-live="polite"
-      aria-label={failed ? 'Cardapio indisponivel' : 'Carregando cardapio'}
-      className="grid h-full place-items-center bg-white px-8 text-center text-[#43160f]"
+      aria-label={failed ? 'Cardápio indisponível' : 'Carregando cardápio'}
+      className={`tokka-loading-screen${failed ? ' tokka-loading-screen--failed' : ''}`}
     >
-      <div className="grid max-w-[280px] justify-items-center gap-5">
-        <div className="grid size-20 place-items-center rounded-full bg-[#43160f] text-white shadow-lg shadow-[#43160f]/15">
-          {failed ? (
-            <ReceiptText size={30} strokeWidth={1.9} />
-          ) : (
-            <span className="grid size-14 place-items-center rounded-full border border-white/25 font-montserrat text-[11px] font-black tracking-[0.16em]">
-              TOKKA
-            </span>
-          )}
+      <div className="tokka-loading-glass" aria-hidden="true">
+        <span className="tokka-loading-glow tokka-loading-glow--first" />
+        <span className="tokka-loading-glow tokka-loading-glow--second" />
+        <span className="tokka-loading-sheen" />
+      </div>
+      <div className="tokka-loading-content">
+        <div className="tokka-loading-orbit">
+          {!failed && <span className="tokka-loading-ring" aria-hidden="true" />}
+          <img
+            src={tokkaLogo}
+            alt="TOKKA"
+            loading="eager"
+            decoding="sync"
+            draggable="false"
+            className="tokka-loading-logo"
+          />
         </div>
-        <div>
-          <h1 data-screen-title="true" tabIndex={-1} className="text-xl font-black uppercase outline-none">
-            {failed ? 'Cardapio indisponivel' : 'Carregando cardapio'}
+        <div className="tokka-loading-copy">
+          <h1 data-screen-title="true" tabIndex={-1} className="outline-none">
+            {failed ? 'Cardápio indisponível' : 'Carregando cardápio'}
           </h1>
-          <p className="mt-2 text-sm font-medium leading-6 text-slate-500">
+          <p>
             {failed
-              ? 'Nao foi possivel carregar este restaurante agora.'
-              : 'Preparando as informacoes do restaurante.'}
+              ? 'Não foi possível carregar este restaurante agora.'
+              : 'Preparando as informações do restaurante.'}
           </p>
         </div>
         {!failed && (
-          <span className="h-1.5 w-28 overflow-hidden rounded-full bg-[#eadfd9]" aria-hidden="true">
-            <span className="block h-full w-1/2 animate-pulse rounded-full bg-[#43160f]" />
+          <span className="tokka-loading-progress" aria-hidden="true">
+            <span className="tokka-loading-progress-fill" />
           </span>
         )}
         {failed && (
           <button
             type="button"
             onClick={onRetry}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#43160f] px-5 text-sm font-black text-white transition active:scale-95"
+            className="tokka-loading-retry inline-flex h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-black transition active:scale-95"
           >
             <RefreshCw size={17} strokeWidth={2.5} />
             Tentar novamente

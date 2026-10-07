@@ -9,6 +9,189 @@
   font-family: 'Montserrat', sans-serif;
 }
 
+.brand-theme > .tokka-loading-screen {
+  --tokka-blue: #06486a;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  height: 100%;
+  overflow: hidden;
+  place-items: center;
+  padding: 24px;
+  background: var(--tokka-blue);
+  color: #fff;
+  text-align: center;
+}
+
+.tokka-loading-glass {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgb(255 255 255 / 8%), transparent 45%, rgb(0 24 46 / 28%));
+}
+
+.tokka-loading-glass::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(125deg, rgb(255 255 255 / 5%), transparent 60%);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+}
+
+.tokka-loading-glow {
+  position: absolute;
+  width: 95%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(113 221 237 / 40%), rgb(55 152 188 / 16%) 45%, transparent 70%);
+  filter: blur(28px);
+  animation: tokka-glass-drift 9s ease-in-out infinite alternate;
+}
+
+.tokka-loading-glow--first {
+  top: -16%;
+  left: -38%;
+}
+
+.tokka-loading-glow--second {
+  right: -40%;
+  bottom: -12%;
+  animation-delay: -5s;
+  animation-direction: alternate-reverse;
+}
+
+.tokka-loading-sheen {
+  position: absolute;
+  inset: -50%;
+  background: linear-gradient(115deg, transparent 36%, rgb(212 247 255 / 12%) 48%, transparent 60%);
+  filter: blur(20px);
+  animation: tokka-glass-sheen 6s ease-in-out infinite;
+}
+
+.tokka-loading-content {
+  display: grid;
+  width: min(100%, 320px);
+  justify-items: center;
+  gap: 28px;
+  padding: 40px 20px 36px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 32px;
+  background: linear-gradient(145deg, rgb(255 255 255 / 11%), rgb(255 255 255 / 3%));
+  box-shadow: 0 24px 64px rgb(0 26 43 / 18%), inset 0 1px 0 rgb(255 255 255 / 12%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.tokka-loading-orbit {
+  position: relative;
+  display: grid;
+  width: 136px;
+  height: 136px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 50%;
+}
+
+.tokka-loading-logo {
+  display: block;
+  width: 112px;
+  height: 112px;
+  object-fit: cover;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 50%;
+  background: var(--tokka-blue);
+  box-shadow: 0 8px 24px rgb(0 24 46 / 24%);
+}
+
+.tokka-loading-ring {
+  position: absolute;
+  inset: -2px;
+  padding: 3px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 25%, rgb(131 221 241 / 18%) 55%, #99e7f5 82%, #fff 94%, transparent);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  animation: tokka-orbit-spin 1.8s linear infinite;
+}
+
+.tokka-loading-copy h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+}
+
+.tokka-loading-copy p {
+  margin: 10px 0 0;
+  color: #c2dce8;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.tokka-loading-progress {
+  display: block;
+  width: 156px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 15%);
+}
+
+.tokka-loading-progress-fill {
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4a9ebe, #d5f6ff, #78cbe2);
+  box-shadow: 0 0 12px rgb(153 231 245 / 50%);
+  animation: tokka-progress-slide 2s ease-in-out infinite;
+}
+
+.tokka-loading-retry {
+  background: #fff;
+  color: var(--tokka-blue);
+}
+
+.tokka-loading-retry:focus-visible {
+  outline: 2px solid #99e7f5;
+  outline-offset: 4px;
+}
+
+.tokka-loading-screen--failed .tokka-loading-glass * {
+  animation: none;
+}
+
+@keyframes tokka-orbit-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes tokka-progress-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(330%); }
+}
+
+@keyframes tokka-glass-drift {
+  to { transform: translate(22%, 26%) scale(1.15); }
+}
+
+@keyframes tokka-glass-sheen {
+  0%, 100% { transform: translateX(-24%); opacity: 0.4; }
+  50% { transform: translateX(24%); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tokka-loading-screen *,
+  .tokka-loading-screen *::before,
+  .tokka-loading-screen *::after {
+    animation: none;
+  }
+}
+
 html,
 body,
 #root {
