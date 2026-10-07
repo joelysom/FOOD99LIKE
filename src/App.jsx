@@ -1789,22 +1789,17 @@ function MenuLoadingScreen({ failed = false, onRetry }) {
       className={`tokka-loading-screen${failed ? ' tokka-loading-screen--failed' : ''}`}
     >
       <div className="tokka-loading-glass" aria-hidden="true">
-        <span className="tokka-loading-glow tokka-loading-glow--first" />
-        <span className="tokka-loading-glow tokka-loading-glow--second" />
-        <span className="tokka-loading-sheen" />
+        <span className="tokka-loading-reflection" />
       </div>
       <div className="tokka-loading-content">
-        <div className="tokka-loading-orbit">
-          {!failed && <span className="tokka-loading-ring" aria-hidden="true" />}
-          <img
-            src={tokkaLogo}
-            alt="TOKKA"
-            loading="eager"
-            decoding="sync"
-            draggable="false"
-            className="tokka-loading-logo"
-          />
-        </div>
+        <img
+          src={tokkaLogo}
+          alt="TOKKA"
+          loading="eager"
+          decoding="sync"
+          draggable="false"
+          className="tokka-loading-logo"
+        />
         <div className="tokka-loading-copy">
           <h1 data-screen-title="true" tabIndex={-1} className="outline-none">
             {failed ? 'Cardápio indisponível' : 'Carregando cardápio'}
