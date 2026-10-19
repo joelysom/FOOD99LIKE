@@ -100,10 +100,12 @@ export function ContactAccount({ user, session, refresh, run, busy }) {
   const [modal, setModal] = useState(null)
   const [message, setMessage] = useState('')
   const [imageError, setImageError] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [dirty, setDirty] = useState(false)
   const [linkBusy, setLinkBusy] = useState(false)
   const mutation = useRef(false)
   const [dragged, setDragged] = useState(null)
+  const maxImageMegabytes = cardsUseFunctions ? 2 : 10
   useEffect(() => {
     if (!dirty) return
     const warn = event => { event.preventDefault(); event.returnValue = '' }
@@ -113,12 +115,12 @@ export function ContactAccount({ user, session, refresh, run, busy }) {
   if (!profile) return <section className="tc-panel"><h2>Seu cartão está esperando.</h2><p>Ative um cartão TOKKA para criar seu perfil.</p><a className="tc-primary" href="/cartoes/cadastro">Ativar cartão</a></section>
   const url = `${window.location.origin}/cartoes/p/${user.uid}`
   const cardUrl = `${window.location.origin}/cartoes/c/${profile.cardId}`
-  const change = field => event => { setDirty(true); setMessage(''); setForm({ ...form, [field]: field === 'username' ? event.target.value.toLowerCase() : event.target.value }) }
+  const change = field => event => { setDirty(true); setMessage(''); setSaveError(''); setForm({ ...form, [field]: field === 'username' ? event.target.value.toLowerCase() : event.target.value }) }
   function chooseImage(event, kind) {
     const file = event.target.files?.[0]
     if (!file) return
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) { setImageError('Escolha uma imagem JPG, PNG ou WebP de até 2 MB.'); return }
-    setImageError(''); setDirty(true)
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > maxImageMegabytes * 1024 * 1024) { setImageError(`Escolha uma imagem JPG, PNG ou WebP de até ${maxImageMegabytes} MB.`); return }
+    setImageError(''); setMessage(''); setSaveError(''); setDirty(true)
     if (kind === 'photo') { setPhotoFile(file); setForm({ ...form, photoX: 50, photoY: 50, photoZoom: 1 }) } else setLogoFile(file)
   }
   async function saveLinks(next) {
@@ -150,12 +152,18 @@ export function ContactAccount({ user, session, refresh, run, busy }) {
   return <>
     <div className="ct-editor-grid">
       <section className="tc-panel ct-profile-editor"><div className="ct-section-heading"><h2>Editar perfil</h2><a className="tc-text" href="/cartoes/simulacao"><Smartphone size={17} />Simular</a></div>
-        <form onSubmit={event => { event.preventDefault(); run(async () => {
-          const [photo, companyLogoUrl] = await Promise.all([upload(photoFile, 'avatar', form.photoUrl), upload(logoFile, 'company-logo', form.companyLogoUrl)])
-          const next = { ...form, photoUrl: photo, companyLogoUrl }
-          await cardsApi('saveProfile', next); setForm(next); setPhotoFile(null); setLogoFile(null); setDirty(false); await refresh(); setMessage('Seu perfil foi salvo.')
+        <form onInvalidCapture={event => {
+          setMessage('')
+          setSaveError(event.target.name === 'username' ? 'Preencha o usuário com 3 a 30 letras minúsculas, números ou _. Não use @, espaços ou acentos.' : 'Confira os campos indicados antes de salvar o perfil.')
+        }} onSubmit={event => { event.preventDefault(); setSaveError(''); setMessage(''); run(async () => {
+          try {
+            const [photo, companyLogoUrl] = await Promise.all([upload(photoFile, 'avatar', form.photoUrl), upload(logoFile, 'company-logo', form.companyLogoUrl)])
+            const next = { ...form, photoUrl: photo, companyLogoUrl }
+            await cardsApi('saveProfile', next); setForm(next); setPhotoFile(null); setLogoFile(null); setDirty(false); await refresh(); setMessage('Seu perfil foi salvo.')
+          } catch (error) { setSaveError(friendlyError(error)) }
         }) }}>
-          <div className="ct-photo-editor"><Avatar profile={{ ...form, photoUrl }} /><div><strong>Sua foto</strong><p>JPG, PNG ou WebP · até 2 MB</p><div className="ct-inline-actions"><button type="button" onClick={() => photoInput.current.click()}><Camera size={15} />Trocar</button><button type="button" disabled={!photoUrl} onClick={() => setModal({ type: 'crop', x: form.photoX, y: form.photoY, zoom: form.photoZoom })}><Crop size={15} />Ajustar</button><button type="button" disabled={!photoUrl} onClick={() => { setPhotoFile(null); setForm({ ...form, photoUrl: '' }); setDirty(true) }}>Remover</button></div></div></div>
+          <fieldset className="ct-profile-fields" disabled={busy}>
+          <div className="ct-photo-editor"><Avatar profile={{ ...form, photoUrl }} /><div><strong>Sua foto</strong><p>JPG, PNG ou WebP · até {maxImageMegabytes} MB</p><div className="ct-inline-actions"><button type="button" onClick={() => photoInput.current.click()}><Camera size={15} />Trocar</button><button type="button" disabled={!photoUrl} onClick={() => setModal({ type: 'crop', x: form.photoX, y: form.photoY, zoom: form.photoZoom })}><Crop size={15} />Ajustar</button><button type="button" disabled={!photoUrl} onClick={() => { setPhotoFile(null); setForm({ ...form, photoUrl: '' }); setDirty(true) }}>Remover</button></div></div></div>
           <input className="ct-file-input" ref={photoInput} type="file" aria-label="Foto de perfil" accept="image/jpeg,image/png,image/webp" onClick={event => { event.currentTarget.value = '' }} onChange={event => chooseImage(event, 'photo')} />
           {imageError && <Notice>{imageError}</Notice>}
           <Field label="Nome completo" autoComplete="name" required maxLength={80} value={form.name} onChange={change('name')} />
@@ -164,11 +172,14 @@ export function ContactAccount({ user, session, refresh, run, busy }) {
           <div className="ct-field-grid"><Field label="Telefone com DDD" type="tel" maxLength={30} value={form.phone} onChange={change('phone')} /><Field label="E-mail público" type="email" maxLength={160} value={form.contactEmail} onChange={change('contactEmail')} /></div>
           <p className="ct-help">Preencha somente os contatos que deseja publicar. O e-mail de acesso à conta permanece privado.</p>
           <Field label="Cidade / Localização" maxLength={100} value={form.location} onChange={change('location')} />
-          <Field label="Nome de usuário exclusivo" required minLength={3} maxLength={30} pattern="[a-z0-9_]{3,30}" value={form.username} onChange={change('username')} />
+          <Field label="Nome de usuário exclusivo" name="username" autoCapitalize="none" spellCheck={false} autoComplete="off" aria-describedby="ct-username-help" title="Use 3 a 30 letras minúsculas, números ou _. Sem @, espaços ou acentos." required minLength={3} maxLength={30} pattern="[a-z0-9_]{3,30}" value={form.username} onChange={change('username')} />
+          <p id="ct-username-help" className="ct-help">Use 3 a 30 letras minúsculas, números ou _. Sem @, espaços ou acentos. Exemplo: joao_silva.</p>
           <Field label="Site ou rede social (HTTPS)" type="url" maxLength={2048} value={form.website} onChange={change('website')} />
-          <div className="ct-company-editor"><div className="ct-section-heading"><h3>Logo da empresa</h3><span>Opcional</span></div><div className="ct-company-preview">{companyLogo ? <img src={companyLogo} alt="Prévia da logo da empresa" /> : <span>Sua logo aqui</span>}</div><div className="ct-inline-actions"><button type="button" onClick={() => logoInput.current.click()}><Camera size={16} />Adicionar / trocar</button><button type="button" disabled={!companyLogo} onClick={() => { setLogoFile(null); setForm({ ...form, companyLogoUrl: '' }); setDirty(true) }}><Trash2 size={15} />Remover</button></div><p className="ct-help">PNG, JPG ou WebP até 2 MB. A logo aparece inteira abaixo do cargo no perfil público.</p><input ref={logoInput} className="ct-file-input" type="file" aria-label="Logo da empresa" accept="image/jpeg,image/png,image/webp" onClick={event => { event.currentTarget.value = '' }} onChange={event => chooseImage(event, 'logo')} /></div>
+          <div className="ct-company-editor"><div className="ct-section-heading"><h3>Logo da empresa</h3><span>Opcional</span></div><div className="ct-company-preview">{companyLogo ? <img src={companyLogo} alt="Prévia da logo da empresa" /> : <span>Sua logo aqui</span>}</div><div className="ct-inline-actions"><button type="button" onClick={() => logoInput.current.click()}><Camera size={16} />Adicionar / trocar</button><button type="button" disabled={!companyLogo} onClick={() => { setLogoFile(null); setForm({ ...form, companyLogoUrl: '' }); setDirty(true) }}><Trash2 size={15} />Remover</button></div><p className="ct-help">PNG, JPG ou WebP até {maxImageMegabytes} MB. A logo aparece inteira abaixo do cargo no perfil público.</p><input ref={logoInput} className="ct-file-input" type="file" aria-label="Logo da empresa" accept="image/jpeg,image/png,image/webp" onClick={event => { event.currentTarget.value = '' }} onChange={event => chooseImage(event, 'logo')} /></div>
           <details className="ct-image-urls"><summary>Usar um endereço de imagem</summary><Field label="Link HTTPS para a foto" type="url" maxLength={2048} value={form.photoUrl} onChange={change('photoUrl')} /><Field label="Link HTTPS para a logo" type="url" maxLength={2048} value={form.companyLogoUrl} onChange={change('companyLogoUrl')} /></details>
-          <div className="ct-save-row"><span role="status">{dirty ? 'Alterações não salvas' : 'Dados salvos no servidor'}</span><button className="tc-primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar perfil'}</button></div>
+          {saveError && <Notice>{saveError}</Notice>}
+          <div className="ct-save-row"><span role="status">{dirty ? 'Alterações não salvas — clique em Salvar perfil para publicar.' : profile.username ? 'Dados salvos no servidor' : 'Complete os dados e clique em Salvar perfil para publicar.'}</span><button className="tc-primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar perfil'}</button></div>
+          </fieldset>
         </form>
       </section>
       <section className="ct-links-editor"><div className="ct-section-heading"><h2>Seus links</h2><span>{links.filter(link => link.enabled).length} ativos</span></div><button className="ct-add-link" disabled={busy || linkBusy || links.length >= 20} onClick={() => setModal({ type: 'link' })}><PlusCircle size={19} />Adicionar link ou ação</button>

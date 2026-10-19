@@ -67,8 +67,32 @@ test('admin gera lote, baixa CSV/SVG e cliente ativa, edita e reabre perfil', as
     context.fillStyle = '#087faa'; context.fillRect(0, 0, 32, 32)
     return canvas.toDataURL('image/png').split(',')[1]
   }), 'base64')
-  await userPage.getByLabel('Foto de perfil', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: png })
+  const largePng = Buffer.from(await userPage.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1024; canvas.height = 1024
+    const context = canvas.getContext('2d'), pixels = context.createImageData(1024, 1024)
+    for (let offset = 0; offset < pixels.data.length; offset += 65536) crypto.getRandomValues(pixels.data.subarray(offset, offset + 65536))
+    context.putImageData(pixels, 0, 0)
+    return canvas.toDataURL('image/png').split(',')[1]
+  }), 'base64')
+  expect(largePng.length).toBeGreaterThan(2 * 1024 * 1024)
+  await userPage.getByLabel('Foto de perfil', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: largePng })
   await userPage.getByLabel('Logo da empresa', { exact: true }).setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: png })
+  await userPage.getByLabel('Nome de usuário exclusivo').fill('@usuario invalido')
+  await userPage.getByRole('button', { name: 'Salvar perfil', exact: true }).click()
+  await expect(userPage.getByRole('alert')).toContainText('Não use @, espaços ou acentos.')
+  await userPage.getByLabel('Nome de usuário exclusivo').fill('conexao_teste')
+  // Server failures remain next to the save button and keep pending fields/photos for retry.
+  await userPage.route('**/api/cards', async route => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'saveProfile') {
+      await route.fulfill({ status: 409, json: { error: { code: 'functions/already-exists', message: 'Este nome de usuário já está em uso.' } } })
+      await userPage.unroute('**/api/cards')
+    } else await route.fallback()
+  })
+  await userPage.getByRole('button', { name: 'Salvar perfil', exact: true }).click()
+  await expect(userPage.locator('.ct-profile-editor').getByRole('alert')).toHaveText('Este nome de usuário já está em uso.')
+  await expect(userPage.getByLabel('Nome completo')).toHaveValue('Conexão de Teste')
+  await expect(userPage.locator('.ct-profile-editor .ct-avatar img')).toHaveAttribute('src', /^blob:/)
   await userPage.getByRole('button', { name: 'Salvar perfil', exact: true }).click()
   await expect(userPage.getByText('Seu perfil foi salvo.')).toBeVisible()
   async function addLink(type, title, value) {
@@ -147,4 +171,32 @@ test('entrada mobile e links antigos continuam no aplicativo original', async ({
   expect(page.url()).toContain('#cardapio-coco-bambu')
   await page.goto('/c/8Ks29#menu')
   await expect(page.locator('.tc-app')).toHaveCount(0)
+})
+
+test('prepara imagem sem createImageBitmap e reduz PNG quando WebP não está disponível', async ({ page }) => {
+  await page.goto('/cartoes')
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1024; canvas.height = 1024
+    const context = canvas.getContext('2d'), pixels = context.createImageData(1024, 1024)
+    for (let offset = 0; offset < pixels.data.length; offset += 65536) crypto.getRandomValues(pixels.data.subarray(offset, offset + 65536))
+    context.putImageData(pixels, 0, 0)
+    const input = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'))
+    const original = HTMLCanvasElement.prototype.toBlob
+    window.createImageBitmap = undefined
+    HTMLCanvasElement.prototype.toBlob = function(callback) { original.call(this, callback, 'image/png') }
+    const { prepareCardImage } = await import('/src/cards/images.js')
+    try {
+      const image = await prepareCardImage(input)
+      const decoded = new Image()
+      decoded.src = `data:${image.contentType};base64,${image.data}`
+      await decoded.decode()
+      return { inputBytes: input.size, outputBytes: atob(image.data).length, type: image.contentType, width: decoded.naturalWidth }
+    } finally { HTMLCanvasElement.prototype.toBlob = original }
+  })
+  expect(result.inputBytes).toBeGreaterThan(2 * 1024 * 1024)
+  expect(result.outputBytes).toBeLessThanOrEqual(400 * 1024)
+  expect(result.type).toBe('image/png')
+  expect(result.width).toBeGreaterThan(0)
+  expect(result.width).toBeLessThan(1024)
 })

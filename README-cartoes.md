@@ -17,7 +17,9 @@ A interface foi adaptada de [eusettee/tokka-contact](https://github.com/eusettee
 
 O editor aceita até 20 links de WhatsApp, LinkedIn, Instagram, Meet, Pix, site, e-mail, telefone ou PDF por HTTPS. Alterações usam revisão para evitar sobrescrita entre abas. O QR permanece igual após editar o perfil.
 
-Fotos e logos de até 2 MB são redimensionadas no navegador para até 1024 pixels e convertidas em uma imagem de até 400 KB. A API verifica tipo, assinatura do arquivo, tamanho, proprietário e estado do cartão. As imagens ficam em documentos privados do Firestore e são servidas pela API somente enquanto o cartão estiver ativo. Não há bucket de Storage obrigatório.
+Fotos e logos de até 10 MB são redimensionadas no navegador para até 1024 pixels e convertidas em uma imagem de até 400 KB, reduzindo as dimensões novamente quando necessário. Navegadores sem `createImageBitmap` usam a leitura por elemento de imagem. A API verifica tipo, assinatura do arquivo, tamanho, proprietário e estado do cartão. As imagens ficam em documentos privados do Firestore e são servidas pela API somente enquanto o cartão estiver ativo. Não há bucket de Storage obrigatório. O transporte legado opcional por Cloud Functions/Storage mantém seu limite de 2 MB.
+
+Dados e imagens são publicados ao clicar em **Salvar perfil**; links são publicados na hora. Erros de envio aparecem junto ao botão de salvar e os campos e fotos pendentes permanecem disponíveis para tentar novamente. O usuário exige 3 a 30 letras minúsculas, números ou `_`, sem `@`, espaços ou acentos.
 
 ## Configuração
 
