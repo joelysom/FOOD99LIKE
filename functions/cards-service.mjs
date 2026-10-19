@@ -7,6 +7,14 @@ const hash = value => createHash('sha256').update(value).digest('hex')
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 const tokenPattern = /^[a-f0-9]{48}$/
 export const normalizeCode = value => String(value ?? '').toUpperCase().replace(/[\s-]/g, '')
+export const isActivationCode = code => /^(?:[A-Z0-9]{8}|[2-9A-HJ-NP-Z]{20})$/.test(code)
+export function sealActivationCode(code, encryptionKey) {
+  if (!Buffer.isBuffer(encryptionKey) || encryptionKey.length !== 32) fail('failed-precondition', 'Chave de emissão não configurada.')
+  const nonce = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey, nonce)
+  const ciphertext = Buffer.concat([cipher.update(code, 'utf8'), cipher.final()])
+  return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64')
+}
 const stamp = () => FieldValue.serverTimestamp()
 const serial = doc => Object.fromEntries(Object.entries({ id: doc.id, ...doc.data() }).map(([k, v]) => [k, v?.toDate ? v.toDate().toISOString() : v]))
 export function createCardsService(db, keyProvider, originProvider) {
@@ -17,10 +25,7 @@ export function createCardsService(db, keyProvider, originProvider) {
     return value
   }
   function seal(code) {
-    const nonce = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', key(), nonce)
-    const ciphertext = Buffer.concat([cipher.update(code, 'utf8'), cipher.final()])
-    return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64')
+    return sealActivationCode(code, key())
   }
   function unseal(value) {
     const packed = Buffer.from(value, 'base64')
@@ -59,7 +64,7 @@ export function createCardsService(db, keyProvider, originProvider) {
       return col('Inventory').doc(data.token)
     }
     const code = normalizeCode(data.code)
-    if (!/^[2-9A-HJ-NP-Z]{20}$/.test(code)) fail('not-found', 'Cartão não encontrado. Confira o código.')
+    if (!isActivationCode(code)) fail('not-found', 'Cartão não encontrado. Confira o código.')
     const index = await col('Codes').doc(hash(code)).get()
     if (!index.exists) fail('not-found', 'Cartão não encontrado. Confira o código.')
     return col('Inventory').doc(index.data().cardId)

@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test, { before, after } from 'node:test'
 import { initializeApp, deleteApp } from '../functions/node_modules/firebase-admin/lib/esm/app/index.js'
+import { getAuth } from '../functions/node_modules/firebase-admin/lib/esm/auth/index.js'
 import { getFirestore } from '../functions/node_modules/firebase-admin/lib/esm/firestore/index.js'
+import { importCardCodes } from '../functions/card-import.mjs'
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { ref, uploadBytes, getBytes } from 'firebase/storage'
@@ -166,6 +168,43 @@ test('proteção contra força bruta recusa excesso de consultas', async () => {
   await db.recursiveDelete(db.collection('cardsLimits'))
   for (let i = 0; i < 60; i++) await reject(call('resolve', { code: 'INVALID' }), 'NOT_FOUND')
   await reject(call('resolve', { code: 'INVALID' }), 'RESOURCE_EXHAUSTED')
+})
+
+test('importação: 51 códigos curtos, retomada, colisões e ativação sem contas fictícias', async () => {
+  await db.recursiveDelete(db.collection('cardsLimits'))
+  const codes = Array.from({ length: 51 }, () => `1${randomBytes(4).toString('hex').slice(0, 7).toUpperCase()}`)
+  const secret = (await readFile('functions/.secret.local', 'utf8')).match(/^CARDS_EXPORT_KEY=(.+)$/m)[1]
+  const options = { codes, encryptionKey: Buffer.from(secret, 'base64'), origin: 'https://cards.example.test', userId: admin.uid }
+  const usersBefore = (await getAuth(app).listUsers()).users.length
+  const imported = await importCardCodes(db, options)
+  assert.equal(imported.quantity, 51)
+  assert.equal(imported.created, true)
+  assert.equal((await getAuth(app).listUsers()).users.length, usersBefore)
+  const inventory = await db.collection('cardsInventory').where('batchId', '==', imported.batchId).get()
+  assert.equal(inventory.size, 51)
+  assert.equal(new Set(inventory.docs.map(doc => doc.id)).size, 51)
+  for (const code of codes) {
+    const found = await call('resolve', { code: `${code.slice(0, 4)}-${code.slice(4)}`.toLowerCase() })
+    assert.equal(found.status, 'disponivel')
+    const record = (await db.collection('cardsInventory').doc(found.token).get()).data()
+    assert.equal(record.ownerId, null)
+    assert.ok(record.codeEncrypted && !JSON.stringify(record).includes(code))
+  }
+  const claimant = await account('short-code')
+  const claimed = await call('activate', { code: codes[0] }, claimant)
+  assert.equal((await call('session', {}, claimant)).profile.cardId, claimed.token)
+  assert.equal((await importCardCodes(db, options)).created, false)
+  assert.equal((await call('resolve', { code: codes[0] })).profileId, claimant.uid)
+  await reject(call('activate', { code: codes[0] }, carol), 'ALREADY_EXISTS')
+  const exported = await call('exportBatch', { batchId: imported.batchId }, admin)
+  assert.deepEqual(exported.cards.map(card => card.code.replaceAll('-', '')), codes)
+  await reject(importCardCodes(db, { ...options, codes: [codes[0], 'ZZZZZZZZ'], requestId: randomUUID() }), 'already-exists')
+  const missingHash = createHash('sha256').update('ZZZZZZZZ').digest('hex')
+  assert.equal((await db.collection('cardsCodes').doc(missingHash).get()).exists, false)
+  await reject(importCardCodes(db, { ...options, codes: [codes[0], codes[0].toLowerCase()] }), 'invalid-argument')
+  await reject(importCardCodes(db, { ...options, encryptionKey: Buffer.alloc(2) }), 'failed-precondition')
+  await reject(call('resolve', { code: 'ZZZZZZZZ' }), 'NOT_FOUND')
+  assert.equal((await db.collection('cardsInventory').where('batchId', '==', imported.batchId).get()).size, 51)
 })
 
 test('navegador: jornada completa, downloads e links antigos', { timeout: 360000 }, async () => {

@@ -36,6 +36,20 @@ Todos os novos caminhos já funcionam com o fallback SPA atual do Firebase Hosti
 
 ## Configuração para produção
 
+### Importar códigos já impressos
+
+O importador administrativo aceita listas privadas de 1 a 150 códigos por arquivo, um por linha. Aceita os códigos curtos de 8 letras/números (incluindo `0` e `1`) e os códigos de 20 caracteres já gerados pelo sistema. Espaços, hífens e diferenças entre maiúsculas/minúsculas são normalizados na busca. A geração normal continua produzindo códigos aleatórios de 20 caracteres.
+
+```powershell
+npm.cmd run firebase:import-cards -- --file CAMINHO_PRIVADO --origin https://DOMINIO_ATUAL --project tokka-eb4ae --firebase-account EMAIL_GOOGLE_AUTORIZADO
+```
+
+A conta indicada deve estar conectada à CLI do Firebase e ter permissão de escrita no Firestore e leitura do segredo `CARDS_EXPORT_KEY` desse projeto. Sem `--firebase-account`, o script utiliza Application Default Credentials. A importação utiliza a chave existente no Secret Manager; não gera nem substitui chaves. Publique a versão atual de `cardsApi` para que a busca aceite os códigos curtos.
+
+Cada importação é uma transação única: cria o lote, os cartões disponíveis, índices por hash e auditoria. Os códigos ficam criptografados; nenhum usuário fictício é criado no Auth. O identificador de lote deriva da lista, permitindo repetir o mesmo comando sem duplicar cartões nem desfazer ativações. Se algum código já pertencer a outro lote, toda a importação é recusada sem alterações. Não coloque a lista de códigos no Git, no frontend ou em logs. O script confirma a quantidade persistida ao terminar.
+
+### Publicar o serviço e as regras
+
 1. `npm.cmd install` e `npm.cmd install --prefix functions`. Backend em Node 22; desenvolvimento também validado com Node 24.
 2. No projeto Firebase atual (`tokka-eb4ae`), habilite Auth por e-mail/senha e inclua o domínio atual nos domínios autorizados. É a mesma base de identidades do restaurante; o novo app guarda sua sessão separadamente. Não há criação pública de administradores.
 3. Cloud Functions requer faturamento habilitado. Configure `CARDS_PUBLIC_ORIGIN` com **a origem HTTPS exata do domínio atual**, sem caminho, consulta ou hash. A CLI solicita esse parâmetro no primeiro deploy; também pode ser definido em `functions/.env.tokka-eb4ae`. Nunca use localhost. Cada lote guarda a origem de emissão para manter os endereços de reimpressão estáveis. Não altere o domínio depois de imprimir sem manter os endereços anteriores acessíveis.

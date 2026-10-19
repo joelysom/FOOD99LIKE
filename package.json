@@ -29,6 +29,7 @@
     "test:cards:integration": "node scripts/test-cards.mjs",
     "test:cards:browser": "node scripts/test-cards.mjs --browser",
     "firebase:grant-cards-admin": "node scripts/grant-cards-admin.mjs",
+    "firebase:import-cards": "node scripts/import-cards.mjs",
     "firebase:deploy:cards": "firebase deploy --only functions:tokka-cards,firestore:rules,storage"
   },
   "dependencies": {
