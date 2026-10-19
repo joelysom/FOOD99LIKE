@@ -1,0 +1,13 @@
+.cards-private/
+.cards-test/
+.npm-cache/
+node_modules/
+functions/node_modules/
+dist/
+test-results/
+playwright-report/
+*.log
+.env*
+!.env.example
+functions/.env*
+functions/.secret*

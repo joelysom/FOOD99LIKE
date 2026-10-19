@@ -4,9 +4,10 @@ import { parseArgs } from 'node:util'
 import { importCardCodes } from '../functions/card-import.mjs'
 
 const { values } = parseArgs({ options: {
-  file: { type: 'string' }, project: { type: 'string', default: 'tokka-eb4ae' },
+  file: { type: 'string' }, project: { type: 'string', default: 'tokka-foods' },
   origin: { type: 'string' }, 'request-id': { type: 'string' },
   'firebase-account': { type: 'string' },
+  'key-file': { type: 'string' },
 } })
 if (!values.file || !values.origin) throw new Error('Uso: npm run firebase:import-cards -- --file ARQUIVO_PRIVADO --origin https://DOMINIO_ATUAL [--firebase-account EMAIL]. Requer permissão administrativa no projeto.')
 if (process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST) throw new Error('Remova as variáveis de emulador antes da importação de produção.')
@@ -30,8 +31,8 @@ try {
   // Check project access before attempting to retrieve the encryption secret.
   await db.collection('cardsBatches').limit(1).get()
   const client = await google.getClient()
-  const response = await client.request({ url: `https://secretmanager.googleapis.com/v1/projects/${encodeURIComponent(values.project)}/secrets/CARDS_EXPORT_KEY/versions/latest:access` })
-  const encryptionKey = Buffer.from(Buffer.from(response.data.payload.data, 'base64').toString('utf8').trim(), 'base64')
+  const secret = values['key-file'] ? JSON.parse(await readFile(values['key-file'], 'utf8')).exportKey : Buffer.from((await client.request({ url: `https://secretmanager.googleapis.com/v1/projects/${encodeURIComponent(values.project)}/secrets/CARDS_EXPORT_KEY/versions/latest:access` })).data.payload.data, 'base64').toString('utf8').trim()
+  const encryptionKey = Buffer.from(secret, 'base64')
   const identity = await google.getCredentials()
   const result = await importCardCodes(db, { codes, encryptionKey, origin: values.origin, userId: operator || identity.client_email || 'operator:application-default', requestId: values['request-id'] })
   encryptionKey.fill(0)

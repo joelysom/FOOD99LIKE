@@ -4,6 +4,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/cards",
+      "destination": "https://tokka-cards-api.vercel.app/api/cards"
+    },
+    {
       "source": "/(.*)",
       "destination": "/"
     }

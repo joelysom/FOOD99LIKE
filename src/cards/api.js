@@ -2,9 +2,10 @@ import { initializeApp, getApps } from 'firebase/app'
 import { getAuth, connectAuthEmulator } from 'firebase/auth'
 import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'firebase/functions'
 import { getStorage, connectStorageEmulator } from 'firebase/storage'
-import { firebaseConfig } from '../lib/firebaseConfig'
-// Separate persisted session, same Firebase identities; restaurant logins remain independent.
+import { cardsFirebaseConfig as firebaseConfig } from './firebaseConfig'
+// Isolated persisted session for the card project; restaurant logins remain independent.
 const emulated = import.meta.env.DEV && import.meta.env.VITE_CARDS_EMULATORS === 'true'
+export const cardsUseFunctions = import.meta.env.VITE_CARDS_TRANSPORT === 'functions' || (emulated && import.meta.env.VITE_CARDS_TRANSPORT !== 'http')
 const config = emulated ? { ...firebaseConfig, projectId: 'demo-tokka-cards', storageBucket: 'demo-tokka-cards.appspot.com' } : firebaseConfig
 const app = getApps().find(app => app.name === 'tokka-cards') || initializeApp(config, 'tokka-cards')
 export const cardsAuth = getAuth(app)
@@ -17,7 +18,22 @@ if (emulated) {
 }
 const callable = httpsCallable(functions, 'cardsApi', { timeout: 120000 })
 export async function cardsApi(action, payload = {}) {
-  return (await callable({ action, payload })).data
+  if (cardsUseFunctions) return (await callable({ action, payload })).data
+  const token = await cardsAuth.currentUser?.getIdToken()
+  const abort = new AbortController()
+  const timeout = setTimeout(() => abort.abort(), 120000)
+  try {
+    const response = await fetch('/api/cards', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ action, payload }), signal: abort.signal,
+    })
+    const result = await response.json()
+    if (!response.ok || result.error) throw Object.assign(new Error(result.error?.message || 'Não foi possível concluir.'), { code: result.error?.code || 'functions/internal' })
+    return result.data
+  } catch (error) {
+    if (error.code) throw error
+    throw Object.assign(new Error('Não foi possível conectar ao serviço. Confira a conexão e tente novamente.'), { code: 'functions/unavailable' })
+  } finally { clearTimeout(timeout) }
 }
 export function friendlyError(error) {
   if (error?.code === 'auth/email-already-in-use') return 'Este e-mail já possui uma conta. Use a opção Entrar.'

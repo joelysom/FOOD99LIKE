@@ -4,7 +4,14 @@ import { readFile } from 'node:fs/promises'
 import { initializeApp } from '../functions/node_modules/firebase-admin/lib/esm/app/index.js'
 import { getFirestore } from '../functions/node_modules/firebase-admin/lib/esm/firestore/index.js'
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Execute node scripts/test-cards.mjs --browser')
-test.beforeEach(async ({ context }) => { await context.route('**/*', route => { const host = new URL(route.request().url()).hostname; return ['127.0.0.1', 'localhost'].includes(host) ? route.continue() : route.abort() }) })
+async function isolate(context) {
+  await context.route('**/*', async route => {
+    const url = new URL(route.request().url())
+    if (url.hostname === 'cards.example.test' && url.pathname === '/api/cards') return route.fulfill({ response: await route.fetch({ url: `http://127.0.0.1:15002${url.pathname}${url.search}` }) })
+    return ['127.0.0.1', 'localhost'].includes(url.hostname) ? route.continue() : route.abort()
+  })
+}
+test.beforeEach(async ({ context }) => isolate(context))
 const db = getFirestore(initializeApp({ projectId: 'demo-tokka-cards' }))
 async function fixture() {
   const email = `browser-${randomUUID()}@test.local`, password = 'Secret123!'
@@ -33,6 +40,7 @@ test('admin gera lote, baixa CSV/SVG e cliente ativa, edita e reabre perfil', as
   await page.screenshot({ path: '.cards-test/admin-desktop.png', fullPage: true })
   const link = await page.getByRole('link', { name: 'Abrir QR' }).first().getAttribute('href')
   const client = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  await isolate(client)
   const userPage = await client.newPage()
   await userPage.goto(`http://127.0.0.1:5174${link}`)
   await expect(userPage.getByText('Cartão encontrado e disponível para ativação.')).toBeVisible()
@@ -52,7 +60,13 @@ test('admin gera lote, baixa CSV/SVG e cliente ativa, edita e reabre perfil', as
   await userPage.getByLabel('Empresa', { exact: true }).fill('TOKKA Teste')
   await userPage.getByLabel('Telefone com DDD').fill('+5581999999999')
   await userPage.getByLabel('E-mail público').fill('publico@example.com')
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6x8AAAAASUVORK5CYII=', 'base64')
+  const png = Buffer.from(await userPage.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 32; canvas.height = 32
+    const context = canvas.getContext('2d')
+    context.fillStyle = '#087faa'; context.fillRect(0, 0, 32, 32)
+    return canvas.toDataURL('image/png').split(',')[1]
+  }), 'base64')
   await userPage.getByLabel('Foto de perfil', { exact: true }).setInputFiles({ name: 'avatar.png', mimeType: 'image/png', buffer: png })
   await userPage.getByLabel('Logo da empresa', { exact: true }).setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: png })
   await userPage.getByRole('button', { name: 'Salvar perfil', exact: true }).click()
@@ -93,12 +107,15 @@ test('admin gera lote, baixa CSV/SVG e cliente ativa, edita e reabre perfil', as
   await userPage.getByRole('link', { name: 'Simular', exact: true }).click()
   await expect(userPage.frameLocator('iframe').getByRole('heading', { name: 'Conexão de Teste' })).toBeVisible()
   const visitor = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  await isolate(visitor)
   const publicPage = await visitor.newPage()
   await publicPage.goto(`http://127.0.0.1:5174${link}`)
   await expect(publicPage).toHaveURL(/\/cartoes\/p\//)
   await expect(publicPage.getByRole('heading', { name: 'Conexão de Teste' })).toBeVisible()
   await expect(publicPage.getByText('Consultor de negócios')).toBeVisible()
   await expect(publicPage.getByRole('img', { name: 'Logo de TOKKA Teste' })).toBeVisible()
+  await expect.poll(() => publicPage.getByRole('img', { name: 'Logo de TOKKA Teste' }).evaluate(image => image.naturalWidth)).toBeGreaterThan(0)
+  await expect.poll(() => publicPage.getByRole('img', { name: 'Foto de Conexão de Teste' }).evaluate(image => image.naturalWidth)).toBeGreaterThan(0)
   await expect(publicPage.getByRole('link', { name: /WhatsApp Comercial/ })).toHaveAttribute('href', 'https://wa.me/5581999999999')
   await expect(publicPage.getByRole('link', { name: 'Ligar', exact: true })).toHaveAttribute('href', 'tel:+5581999999999')
   await expect(publicPage.getByText('Link oculto')).toHaveCount(0)

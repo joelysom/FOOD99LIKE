@@ -18,5 +18,7 @@ functions/.env*
 playwright-report/
 test-results/
 .cards-test/
+.cards-private/
+.vercel/
 
 .firebase-cards-test.json

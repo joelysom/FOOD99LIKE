@@ -7,12 +7,17 @@ import { initializeApp, deleteApp } from '../functions/node_modules/firebase-adm
 import { getAuth } from '../functions/node_modules/firebase-admin/lib/esm/auth/index.js'
 import { getFirestore } from '../functions/node_modules/firebase-admin/lib/esm/firestore/index.js'
 import { importCardCodes } from '../functions/card-import.mjs'
+import { createCardsService } from '../functions/cards-service.mjs'
+import { createCardsHttpHandler } from '../functions/cards-http.mjs'
+import { createLocalCardsServer } from '../functions/local-http-server.mjs'
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { ref, uploadBytes, getBytes } from 'firebase/storage'
 const projectId = 'demo-tokka-cards'
 if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_HOST) throw new Error('Execute npm run test:cards:integration; testes nunca acessam produção.')
 const app = initializeApp({ projectId }), db = getFirestore(app)
+const useHttp = process.env.CARDS_TEST_HTTP === 'true'
+let httpServer
 let rules, batchId, cards, alice, bob, admin, carol
 async function account(name) {
   const response = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-key`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `${name}-${randomUUID()}@test.local`, password: 'Secret123!', returnSecureToken: true }) })
@@ -21,20 +26,26 @@ async function account(name) {
   return { uid: data.localId, token: data.idToken }
 }
 async function call(action, payload = {}, user = null) {
-  const response = await fetch(`http://127.0.0.1:15001/${projectId}/southamerica-east1/cardsApi`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(user ? { Authorization: `Bearer ${user.token}` } : {}) }, body: JSON.stringify({ data: { action, payload } }) })
+  const response = await fetch(useHttp ? 'http://127.0.0.1:15002/api/cards' : `http://127.0.0.1:15001/${projectId}/southamerica-east1/cardsApi`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(user ? { Authorization: `Bearer ${user.token}` } : {}) }, body: JSON.stringify(useHttp ? { action, payload } : { data: { action, payload } }) })
   const data = await response.json()
-  if (data.error) throw Object.assign(new Error(data.error.message), { code: data.error.status })
+  if (data.error) throw Object.assign(new Error(data.error.message), { code: data.error.status || data.error.code.replace('functions/', '').replaceAll('-', '_').toUpperCase() })
   assert.ok(response.ok, JSON.stringify(data))
-  return data.result
+  return data.result ?? data.data
 }
 const reject = (promise, code) => assert.rejects(promise, error => error.code === code)
 before(async () => {
-  rules = await initializeTestEnvironment({ projectId, firestore: { rules: await readFile('firestore.rules', 'utf8') }, storage: { rules: await readFile('storage.rules', 'utf8') } })
+  rules = await initializeTestEnvironment({ projectId, firestore: { rules: await readFile('firestore.rules', 'utf8') }, ...(!useHttp ? { storage: { rules: await readFile('storage.rules', 'utf8') } } : {}) })
   await rules.clearFirestore()
   ;[admin, alice, bob, carol] = await Promise.all(['admin', 'alice', 'bob', 'carol'].map(account))
   await db.collection('cardsAdmins').doc(admin.uid).set({ role: 'admin', active: true })
+  if (useHttp) {
+    const secret = (await readFile('functions/.secret.local', 'utf8')).match(/^CARDS_EXPORT_KEY=(.+)$/m)[1]
+    const service = createCardsService(db, () => secret, () => 'https://cards.example.test')
+    httpServer = createLocalCardsServer(createCardsHttpHandler(getAuth(app), service))
+    await new Promise((resolve, reject) => { httpServer.once('error', reject); httpServer.listen(15002, '127.0.0.1', resolve) })
+  }
 })
-after(async () => { await rules?.cleanup(); await deleteApp(app) })
+after(async () => { if (httpServer) await new Promise(resolve => httpServer.close(resolve)); await rules?.cleanup(); await deleteApp(app) })
 test('A: admin emite 300 cartões únicos e códigos protegidos no banco', async () => {
   batchId = randomUUID()
   assert.equal((await call('generate', { requestId: batchId }, admin)).quantity, 300)
@@ -149,9 +160,11 @@ test('regras negam dados privados e escrita direta, inclusive ao admin', async (
       await assertFails(getDoc(doc(firestore, collection, alice.uid)))
       await assertFails(setDoc(doc(firestore, collection, alice.uid), { role: 'admin' }))
     }
+    await assertFails(getDoc(doc(firestore, 'cardsImages', alice.uid, 'files', 'avatar')))
+    await assertFails(setDoc(doc(firestore, 'cardsImages', alice.uid, 'files', 'avatar'), { data: 'private' }))
   }
 })
-test('Storage: apenas dono envia foto válida; público não lê foto de cartão bloqueado', async () => {
+test('Storage: apenas dono envia foto válida; público não lê foto de cartão bloqueado', { skip: useHttp }, async () => {
   const ownStorage = rules.authenticatedContext(bob.uid).storage()
   const jpeg = new Uint8Array([255, 216, 255, 217])
   await uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/avatar`), jpeg, { contentType: 'image/jpeg' })
@@ -207,10 +220,29 @@ test('importação: 51 códigos curtos, retomada, colisões e ativação sem con
   assert.equal((await db.collection('cardsInventory').where('batchId', '==', imported.batchId).get()).size, 51)
 })
 
+test('imagens sem Storage: upload exige dono, valida bytes e bloqueio suspende acesso público', async () => {
+  const owner = await account('image-owner')
+  await call('activate', { token: cards[6].id }, owner)
+  const secret = (await readFile('functions/.secret.local', 'utf8')).match(/^CARDS_EXPORT_KEY=(.+)$/m)[1]
+  const service = createCardsService(db, () => secret, () => 'https://cards.example.test')
+  const context = { auth: { uid: owner.uid }, rawRequest: { ip: 'image-test' } }
+  const data = { kind: 'avatar', contentType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6x8AAAAASUVORK5CYII=' }
+  const saved = await service.uploadImage(context, data)
+  assert.ok(saved.url.startsWith(`https://cards.example.test/api/cards?image=${owner.uid}&kind=avatar`))
+  assert.equal((await service.publicImage({ rawRequest: { ip: 'image-test' } }, { profileId: owner.uid, kind: 'avatar' })).data, data.data)
+  await reject(service.uploadImage({}, data), 'unauthenticated')
+  await reject(service.uploadImage({ auth: { uid: carol.uid } }, data), 'failed-precondition')
+  await reject(service.uploadImage(context, { ...data, data: Buffer.from('<svg></svg>').toString('base64') }), 'invalid-argument')
+  await reject(service.uploadImage(context, { ...data, kind: '../secret' }), 'invalid-argument')
+  await call('block', { token: cards[6].id }, admin)
+  await reject(service.publicImage({}, { profileId: owner.uid, kind: 'avatar' }), 'not-found')
+  await reject(service.uploadImage(context, data), 'permission-denied')
+})
+
 test('navegador: jornada completa, downloads e links antigos', { timeout: 360000 }, async () => {
   await db.recursiveDelete(db.collection('cardsLimits'))
   const code = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config', 'tests/cards.playwright.config.mjs'], { stdio: 'inherit', env: process.env })
+    const child = spawn(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config', 'tests/cards.playwright.config.mjs'], { stdio: 'inherit', env: { ...process.env, ...(useHttp ? { CARDS_TEST_HTTP_RUNNING: 'true' } : {}) } })
     child.on('error', reject); child.on('exit', resolve)
   })
   assert.equal(code, 0, 'A jornada real no navegador precisa passar.')

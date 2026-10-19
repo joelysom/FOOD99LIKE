@@ -160,6 +160,36 @@ export function createCardsService(db, keyProvider, originProvider) {
         throw error
       }
     },
+    async uploadImage(context, data) {
+      const userId = uid(context)
+      await limit(context, 'upload-image', 10)
+      if (!['avatar', 'company-logo'].includes(data.kind) || typeof data.data !== 'string' || data.data.length > 550000) fail('invalid-argument', 'Imagem inválida.')
+      const bytes = Buffer.from(data.data, 'base64')
+      const signature = data.contentType === 'image/png' ? bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+        : data.contentType === 'image/jpeg' ? bytes.subarray(0, 3).toString('hex') === 'ffd8ff'
+          : data.contentType === 'image/webp' && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP'
+      if (!signature || bytes.length > 400 * 1024 || bytes.toString('base64') !== data.data) fail('invalid-argument', 'Escolha uma imagem JPG, PNG ou WebP de até 400 KB.')
+      const baseUrl = origin()
+      await db.runTransaction(async tx => {
+        const profile = await tx.get(col('Profiles').doc(userId))
+        if (!profile.exists) fail('failed-precondition', 'Ative seu cartão antes de enviar uma imagem.')
+        const card = await tx.get(col('Inventory').doc(profile.data().cardId))
+        if (card.data()?.ownerId !== userId || card.data()?.status !== 'ativado') fail('permission-denied', 'Este cartão não está disponível para edição.')
+        tx.set(col('Images').doc(userId).collection('files').doc(data.kind), { contentType: data.contentType, data: data.data, updatedAt: stamp() })
+      })
+      return { url: `${baseUrl}/api/cards?image=${encodeURIComponent(userId)}&kind=${data.kind}&v=${randomBytes(8).toString('hex')}` }
+    },
+    async publicImage(context, data) {
+      await limit(context, 'public-image', 120)
+      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(data.profileId || '') || !['avatar', 'company-logo'].includes(data.kind)) fail('not-found', 'Imagem não encontrada.')
+      return db.runTransaction(async tx => {
+        const profile = await tx.get(col('Profiles').doc(data.profileId))
+        if (!profile.exists) fail('not-found', 'Imagem não encontrada.')
+        const [card, image] = await tx.getAll(col('Inventory').doc(profile.data().cardId), col('Images').doc(data.profileId).collection('files').doc(data.kind))
+        if (card.data()?.ownerId !== data.profileId || card.data()?.status !== 'ativado' || !image.exists) fail('not-found', 'Imagem não encontrada.')
+        return { data: image.data().data, contentType: image.data().contentType }
+      })
+    },
     async saveProfile(context, data) {
       const userId = uid(context)
       await limit(context, 'profile', 20)

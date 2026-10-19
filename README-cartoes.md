@@ -1,145 +1,110 @@
-# TOKKA Cartões — aplicativo independente no domínio atual
+# TOKKA Cartões
 
-## Interface TOKKA Contact
+O aplicativo fica em `https://nfcfoodtest.vercel.app/cartoes`. Os cartões usam **Firebase Auth e Firestore do projeto `tokka-foods`**, com uma sessão independente. As configurações do restaurante em `src/lib/firebaseConfig.js`, os links NFC de mesas, os hashes do cardápio e `/c/8Ks29` permanecem preservados.
 
-O frontend foi adaptado do repositório [eusettee/tokka-contact](https://github.com/eusettee/tokka-contact), revisão `1cf7f03b94b384d50dd06783b51de5199cb1c917`, em 19/10/2026. Foram preservados a logo original, a estampa de ondas, as fontes Google Sans locais e os ícones. O tema escuro fica restrito ao aplicativo `/cartoes`.
+O backend está na Vercel, no projeto `tokka-cards-api`. O navegador chama `/api/cards` no domínio atual; um rewrite encaminha essa rota para `https://tokka-cards-api.vercel.app/api/cards`. O fallback original das demais rotas continua igual. Este fluxo não depende de Cloud Functions, Secret Manager nem Cloud Storage e não exige ativar o Blaze no Firebase. Aplicam-se as cotas dos planos contratados.
 
-- `/cartoes/conta`: editor com duas colunas a partir de 768 px e largura máxima de 1120 px, foto com ajuste de enquadramento, cargo, empresa, bio, telefone, e-mail público opcional, localização e logo da empresa. Foto e logo aceitam JPG, PNG ou WebP de até 2 MB, conforme as regras do Firebase.
-- Links: até 20 ações de WhatsApp, LinkedIn, Instagram, Meet/agenda, Pix, site, e-mail, telefone ou PDF externo por HTTPS. Inclusão, edição, exclusão, filtros, ativação e reordenação por alça/setas. Alterações são salvas no servidor imediatamente; conflitos entre abas não sobrescrevem os links silenciosamente.
-- `/cartoes/p/UID`: perfil público com largura máxima de 440 px, cartão azul com ondas, salvar contato em vCard, ligar, logo e links ativos. Pix apenas copia a chave configurada. O e-mail público é preenchido explicitamente; o e-mail de login nunca é copiado para ele.
-- `/cartoes/simulacao`: prévia do perfil publicado em uma moldura de celular.
-- Compartilhamento: Web Share quando disponível, copiar endereço, visualizar QR e baixar SVG do mesmo QR individual estável.
+## Interface e endereços
 
-Os campos adicionais são opcionais e compatíveis com perfis anteriores. `saveProfile` aceita os campos públicos validados; a operação autenticada `saveLinks` usa revisão numérica (`linksRevision`) e transação. O público recebe apenas links ativos. O Storage aceita somente `avatar` e `company-logo` nos caminhos de imagens do proprietário. Nenhum dado precisa ser migrado.
+A interface foi adaptada de [eusettee/tokka-contact](https://github.com/eusettee/tokka-contact), revisão `1cf7f03b94b384d50dd06783b51de5199cb1c917`. Logo, ondas, Google Sans e ícones têm sua origem registrada em `src/cards/assets/`. O tema escuro fica restrito a `/cartoes`.
 
-Após atualizar o frontend, publique também Functions e regras de Storage com `npm.cmd run firebase:deploy:cards`, pois os novos campos e links dependem do backend atualizado. As configurações de domínio, Hosting, Vercel, links de restaurante e emissão permanecem as existentes. Os contadores e a caixa de contatos do protótipo local não foram importados como dados fictícios.
+- `/cartoes` e `/cartoes/cadastro`: identificação pelo código impresso e criação/acesso à conta.
+- `/cartoes/c/TOKEN`: QR individual estável. Abre a ativação ou encaminha ao perfil de um cartão já ativado.
+- `/cartoes/conta`: editor responsivo de nome, usuário, foto, cargo, empresa, logo, bio, telefone, e-mail público, localização, site e links.
+- `/cartoes/p/UID`: perfil público, vCard, ligação e links ativos. O e-mail de login nunca é publicado automaticamente.
+- `/cartoes/simulacao`: prévia do perfil publicado.
+- `/cartoes/admin`: emissão, lotes, pesquisa, bloqueio, CSV e kit de impressão. Exige permissão específica no servidor.
 
-Arquivos principais desta adaptação: `src/cards/ContactScreens.jsx`, `src/cards/contact.js`, `src/cards/cards.css`, `src/cards/assets/`, `functions/contact-profile.mjs`, `functions/cards-service.mjs`, `functions/index.mjs`, `storage.rules` e testes `tests/cards.*`.
+O editor aceita até 20 links de WhatsApp, LinkedIn, Instagram, Meet, Pix, site, e-mail, telefone ou PDF por HTTPS. Alterações usam revisão para evitar sobrescrita entre abas. O QR permanece igual após editar o perfil.
 
-Validação em 19/10/2026: build aprovado, rotas aprovadas, sete testes anteriores do cardápio aprovados e 15 verificações de integração aprovadas, incluindo dois cenários Playwright. O fluxo de navegador valida upload de foto/logo, links com persistência e ordem, ocultação de links desativados, QR, simulação, vCard, Pix, privacidade e links antigos. Nenhuma publicação foi feita nesta adaptação.
+Fotos e logos de até 2 MB são redimensionadas no navegador para até 1024 pixels e convertidas em uma imagem de até 400 KB. A API verifica tipo, assinatura do arquivo, tamanho, proprietário e estado do cartão. As imagens ficam em documentos privados do Firestore e são servidas pela API somente enquanto o cartão estiver ativo. Não há bucket de Storage obrigatório.
 
-Implementado com React/Vite, Firebase Auth, Cloud Functions (2ª geração), Firestore e Storage existentes. As rotas por hash, URLs NFC de mesas, `/c/8Ks29`, configurações de restaurante, `vercel.json` e rewrites de Hosting permanecem preservados. O novo módulo é carregado apenas em `/cartoes` e usa uma sessão Firebase nomeada, independente do login do restaurante.
+## Configuração
 
-## Endereços
+As variáveis `VITE_CARDS_FIREBASE_*` pertencem somente aos cartões. Os valores públicos padrão vêm do aplicativo web cadastrado em `tokka-foods`. As variáveis antigas `VITE_FIREBASE_*` continuam exclusivas do restaurante. `.firebaserc` mantém o default anterior e acrescenta o alias `cards` para `tokka-foods`.
 
-Para verificar o frontend publicado, execute `npm.cmd run test:production`. Esse comando compila o projeto e abre o build final no Playwright, conferindo os estilos dos cartões em desktop e celular e os links existentes do cardápio. O teste usa respostas simuladas para cartões e bloqueia o acesso ao Firebase de produção. Se necessário, defina `PLAYWRIGHT_CHROMIUM_EXECUTABLE` com o caminho de um Chromium instalado.
+A API precisa destes **segredos de produção no projeto Vercel do backend**, nunca no frontend:
 
-Os dois aplicativos usam carregadores `lazy` separados em `src/main.jsx`. Mantenha cada `import()` dentro do seu próprio carregador: com o Vite 8, um único carregador com importações condicionais deixava de carregar o CSS dos cartões no build de produção.
+- `CARDS_FIREBASE_SERVICE_ACCOUNT`: JSON da conta de serviço dedicada `tokka-cards-api@tokka-foods.iam.gserviceaccount.com`.
+- `CARDS_EXPORT_KEY`: 32 bytes aleatórios em base64 para criptografia AES-256-GCM dos códigos.
+- `CARDS_PUBLIC_ORIGIN`: origem HTTPS do domínio impresso, atualmente `https://nfcfoodtest.vercel.app`.
 
-- `/cartoes` e `/cartoes/cadastro`: QR geral do folheto, identificação por código e cadastro/login.
-- `/cartoes/c/TOKEN`: QR individual estável; cartão disponível abre ativação; ativado encaminha ao perfil; bloqueado informa indisponibilidade.
-- `/cartoes/conta`: área privada, edição de nome, username, foto, bio e site.
-- `/cartoes/p/UID`: perfil público estável, com apenas dados autorizados.
-- `/cartoes/admin`: emissão, totais, histórico de lotes, pesquisa, bloqueio e exportação.
+A conta de serviço usa somente `roles/datastore.user` e `roles/firebaseauth.viewer`. A API verifica o ID token e sua revogação, usa o UID autenticado e consulta `cardsAdmins` antes de operações administrativas. Dados e segredos não são registrados em logs nem incorporados ao bundle do navegador.
 
-Todos os novos caminhos já funcionam com o fallback SPA atual do Firebase Hosting e da Vercel. Não há necessidade de alterar DNS, domínio, links antigos nem rewrites para API: o SDK chama a Cloud Function autenticada diretamente.
+O provisionamento está em `scripts/setup-cards-vercel.mjs`: reutiliza a configuração privada, configura a conta de serviço, acrescenta o domínio autorizado sem remover os anteriores e importa o lote solicitado. Ele recusa gerar outra chave se já houver cartões no banco. A configuração fica em `.cards-private/tokka-foods-vercel.json`, ignorada por Git e Vercel e protegida por permissões locais. **Guarde backup seguro desse arquivo**. Trocar a chave sem migrar os códigos impede reimpressão de lotes anteriores. Não publique esse arquivo, arquivos `.env`, tokens ou listas de códigos.
 
-## Configuração para produção
+## Publicar o backend
 
-### Importar códigos já impressos
-
-O importador administrativo aceita listas privadas de 1 a 150 códigos por arquivo, um por linha. Aceita os códigos curtos de 8 letras/números (incluindo `0` e `1`) e os códigos de 20 caracteres já gerados pelo sistema. Espaços, hífens e diferenças entre maiúsculas/minúsculas são normalizados na busca. A geração normal continua produzindo códigos aleatórios de 20 caracteres.
+Instale as dependências do projeto e de `functions/`. Em seguida:
 
 ```powershell
-npm.cmd run firebase:import-cards -- --file CAMINHO_PRIVADO --origin https://DOMINIO_ATUAL --project tokka-eb4ae --firebase-account EMAIL_GOOGLE_AUTORIZADO
+npm.cmd run cards:prepare-backend
+vercel link --yes --project tokka-cards-api --scope joelysonsilva-8777s-projects --cwd .cards-test/vercel-backend
+vercel deploy --prod --yes --scope joelysonsilva-8777s-projects --cwd .cards-test/vercel-backend
 ```
 
-A conta indicada deve estar conectada à CLI do Firebase e ter permissão de escrita no Firestore e leitura do segredo `CARDS_EXPORT_KEY` desse projeto. Sem `--firebase-account`, o script utiliza Application Default Credentials. A importação utiliza a chave existente no Secret Manager; não gera nem substitui chaves. Publique a versão atual de `cardsApi` para que a busca aceite os códigos curtos.
+O preparador copia somente o código necessário para uma pasta de implantação ignorada. O build instala as dependências de `functions/`. Os três segredos devem estar cadastrados na Vercel antes do deploy; use entrada por stdin ou o painel, sem colocar seus valores em argumentos de shell. O frontend segue o deploy GitHub/Vercel já existente. A API não precisa estar no mesmo time Vercel do frontend: o rewrite é restrito a `/api/cards`.
 
-Cada importação é uma transação única: cria o lote, os cartões disponíveis, índices por hash e auditoria. Os códigos ficam criptografados; nenhum usuário fictício é criado no Auth. O identificador de lote deriva da lista, permitindo repetir o mesmo comando sem duplicar cartões nem desfazer ativações. Se algum código já pertencer a outro lote, toda a importação é recusada sem alterações. Não coloque a lista de códigos no Git, no frontend ou em logs. O script confirma a quantidade persistida ao terminar.
+`functions/index.mjs` continua disponível para instalações que optem por Cloud Functions; `VITE_CARDS_TRANSPORT=functions` seleciona esse transporte. Ele não é necessário para a instalação atual sem Blaze.
 
-### Publicar o serviço e as regras
+## Importar códigos já impressos
 
-1. `npm.cmd install` e `npm.cmd install --prefix functions`. Backend em Node 22; desenvolvimento também validado com Node 24.
-2. No projeto Firebase atual (`tokka-eb4ae`), habilite Auth por e-mail/senha e inclua o domínio atual nos domínios autorizados. É a mesma base de identidades do restaurante; o novo app guarda sua sessão separadamente. Não há criação pública de administradores.
-3. Cloud Functions requer faturamento habilitado. Configure `CARDS_PUBLIC_ORIGIN` com **a origem HTTPS exata do domínio atual**, sem caminho, consulta ou hash. A CLI solicita esse parâmetro no primeiro deploy; também pode ser definido em `functions/.env.tokka-eb4ae`. Nunca use localhost. Cada lote guarda a origem de emissão para manter os endereços de reimpressão estáveis. Não altere o domínio depois de imprimir sem manter os endereços anteriores acessíveis.
-4. Gere uma chave aleatória de 32 bytes em base64 em um gerenciador seguro. Cadastre por entrada interativa, sem colocá-la no código nem no frontend:
+O importador aceita um arquivo privado com 1 a 150 códigos, um por linha. Aceita códigos curtos de 8 letras/números e os códigos de 20 caracteres já gerados. Busca ignora espaços, hífens e diferenças de maiúsculas/minúsculas. A geração normal continua usando 20 caracteres aleatórios com `crypto.randomBytes` e rejeição de viés.
 
-   ```powershell
-   npx.cmd firebase functions:secrets:set CARDS_EXPORT_KEY
-   ```
+```powershell
+npm.cmd run firebase:import-cards -- --file ARQUIVO_PRIVADO --origin https://nfcfoodtest.vercel.app --project tokka-foods --firebase-account EMAIL_GOOGLE_AUTORIZADO --key-file .cards-private/tokka-foods-vercel.json
+```
 
-   Guarde backup seguro. A chave criptografa os códigos para reimpressão. Substituí-la sem migrar os dados impede decifrar lotes anteriores. A Cloud Function usa Secret Manager; `CARDS_EXPORT_KEY` não deve receber prefixo `VITE_`.
-5. Cadastre uma conta real no Auth. Anote seu UID. Com credenciais administrativas confiáveis (Application Default Credentials, por exemplo `gcloud auth application-default login`, ou `GOOGLE_APPLICATION_CREDENTIALS` apontando para credencial protegida), conceda acesso específico a cartões:
+A conta indicada deve estar conectada à CLI do Firebase e ter acesso administrativo ao Firestore. Sem `--firebase-account`, o script utiliza Application Default Credentials. A chave vem do arquivo protegido indicado; instalações com Secret Manager podem omitir `--key-file`.
 
-   ```powershell
-   npm.cmd run firebase:grant-cards-admin -- UID_FIREBASE
-   ```
+Uma transação cria lote, inventário, índices por hash e auditoria. Nenhuma conta fictícia é criada: os cartões ficam disponíveis até uma pessoa criar sua conta real e ativá-los. Repetir a mesma lista não duplica cartões nem desfaz ativações. Se algum código pertencer a outro lote, a transação é recusada sem alterações. O script confere a quantidade persistida.
 
-   O script valida a existência da conta e grava `cardsAdmins/UID` e auditoria. O papel administrativo do restaurante não concede esse acesso automaticamente. Para revogar, defina `active: false` nesse documento por ferramenta administrativa confiável.
-6. Publique backend e regras:
+## Administração e impressão
 
-   ```powershell
-   npm.cmd run firebase:deploy:cards
-   ```
+Para conceder acesso, crie uma conta real no Auth, anote o UID e execute com credenciais administrativas confiáveis:
 
-7. Publique o frontend pelo fluxo já utilizado no domínio atual. Se ele estiver no Firebase Hosting, use `npm.cmd run firebase:deploy:hosting`. Se estiver na Vercel, publique o build nesse mesmo projeto Vercel. O backend permanece no Firebase em ambos os casos. Não foi criado outro site ou domínio.
-8. Recomenda-se habilitar TTL para `cardsLimits.expiresAt` no Firestore. A limitação funciona sem TTL; ele evita acumular buckets vencidos. Não é necessário índice composto nem migração de dados existentes.
+```powershell
+npm.cmd run firebase:grant-cards-admin -- UID_FIREBASE
+```
 
-As integrações reais precisam desses parâmetros, permissões e deploy. O trabalho local não emite cartões no banco de produção nem cria contas fictícias nele.
+O script verifica a conta e grava `cardsAdmins/UID` e auditoria no projeto `tokka-foods`. O papel do restaurante não concede essa permissão automaticamente. Para revogar, defina `active: false` nesse documento por ferramenta administrativa confiável.
 
-## Operação e impressão
+No painel, a geração aceita de 1 a 1000 cartões, com 300 por padrão. O requestId permite retomar uma emissão interrompida. Somente lotes concluídos podem ser ativados ou exportados.
 
-Entre em `/cartoes/admin`, escolha a quantidade (300 por padrão, entre 1 e 1.000) e gere o lote. A confirmação só aparece após persistência. Em falha de conexão, use **Retomar emissão**, inclusive ao reabrir a aba; o identificador do pedido evita duplicatas. Lotes em emissão também aparecem no histórico e podem ser retomados pela conta responsável. Cartões desses lotes não podem ser ativados antes de concluir a emissão.
+- CSV: número, IDs, lote, código, estado, proprietário, datas e URL; inclui proteção contra fórmulas.
+- Kit ZIP: QRs individuais SVG, folheto geral SVG e `imprimir.html` com cartões de 85,6 × 54 mm.
+- Abra o HTML e imprima em A4, escala 100%, ou salve em PDF. Valide prova, leitura do QR e acabamento com a gráfica; o kit não aplica sangria.
 
-Selecione o lote e exporte:
-
-- **CSV**: número, identificadores, código, status, UID do proprietário, datas e URL. Proteção contra fórmulas em células.
-- **Kit ZIP**: QR individual SVG com margem de segurança, `imprimir.html` vetorial em cartões de 85,6 × 54 mm, QR geral `folheto-cadastro.svg` e instruções.
-- Abra `imprimir.html`, imprima em A4 a 100% ou use **Salvar como PDF**. Valide a prova, leitura do QR, área de corte e sangria com a gráfica antes da tiragem. O kit não aplica sangria.
-
-Os códigos ficam mascarados na listagem e só são decifrados em exportação autenticada e auditada. CSV e ZIP contêm credenciais de ativação de cartões disponíveis: distribua com acesso restrito. O QR individual é um token de posse para cartões ainda não ativados, conforme o fluxo solicitado; qualquer pessoa que receba sua URL antes da entrega pode reivindicar o cartão. O folheto geral não contém credenciais individuais.
+Códigos só são decifrados em exportação administrativa auditada. CSV e ZIP permitem ativar cartões disponíveis e devem ser distribuídos com acesso restrito. O QR individual também permite reivindicar um cartão ainda não ativado; mantenha os arquivos protegidos até a entrega.
 
 ## Dados e segurança
 
-Coleções novas, todas sem leitura/escrita direta pelo SDK do navegador:
+Todas as coleções `cards*` e as imagens são privadas ao SDK do navegador. O backend acessa o banco com Admin SDK e aplica autenticação, autorização, validação e limites transacionais.
 
-- `cardsAdmins`: permissões específicas, concedidas somente por Admin SDK.
-- `cardsBatches`: quantidade, progresso, origem, estado, responsável e datas.
-- `cardsInventory`: token público aleatório de 192 bits, lote, número, status, UID, datas e código criptografado AES-256-GCM.
-- `cardsCodes`: ID SHA-256 do código → cartão. Códigos têm 20 símbolos sem caracteres ambíguos, cerca de 99 bits, gerados por `crypto.randomBytes` com rejeição de viés. Criações com precondição garantem unicidade de códigos/tokens no banco, inclusive entre lotes.
-- `cardsProfiles`: perfil público associado ao UID, sem e-mail, senha ou credencial de ativação.
-- `cardsUsernames`: reserva atômica de usernames exclusivos.
-- `cardsAudit`: emissão, exportação, ativação, recusas e bloqueios, sem códigos nem IPs em claro.
-- `cardsLimits`: limites transacionais por hash de IP e UID, compartilhados entre instâncias.
+- `cardsBatches`, `cardsInventory` e `cardsCodes`: lotes, tokens aleatórios de 192 bits, estados, proprietário, código criptografado e índice SHA-256.
+- `cardsProfiles` e `cardsUsernames`: perfil vinculado ao UID e reserva atômica do nome de usuário.
+- `cardsImages/UID/files/{avatar,company-logo}`: imagens validadas, com acesso público mediado pela API.
+- `cardsAdmins`, `cardsAudit`, `cardsLimits`: permissões, histórico e contadores por hash de IP/UID. Logs não contêm códigos, segredos nem IPs em claro.
 
-`cardsApi` valida autenticação e papel administrativo no backend. Geração usa blocos de até 150 cartões e só libera ativação depois do lote completo; repetir o mesmo requestId retoma a operação. Ativação lê cartão, perfil e lote em uma transação e grava proprietário/perfil/auditoria juntos. O documento de perfil por UID impede dois cartões por conta. A repetição da ativação pelo próprio dono é idempotente, sem transferência. Nenhuma API aceita escolher o dono de um perfil: usa sempre o UID autenticado.
+Ativação verifica cartão, lote e perfil e grava o vínculo em uma transação. Uma conta tem no máximo um cartão; uma segunda pessoa não pode tomá-lo. Bloqueio preserva proprietário/histórico e suspende perfil e imagens públicos. Nome de usuário e conteúdo podem mudar sem alterar os endereços impressos.
 
-O acesso público retorna somente nome, username, bio, foto e site; cartão bloqueado também suspende o perfil público. Bloqueio mantém proprietário e histórico, sem reatribuir cartão. Fotos JPG/PNG/WebP de até 2 MB são enviadas somente pelo dono, no caminho isolado `cards/profiles/UID/avatar`. Links públicos aceitam apenas HTTPS. Alterar username não altera o endereço do perfil.
+Limites por minuto: consulta 60, ativação 12, edição 20, perfil/imagem públicos 120 e geração/exportação/upload 10. São compartilhados entre instâncias da API. Os contadores vencidos podem ser removidos por rotina administrativa; TTL não é necessário para validar os limites.
 
-Limites atuais por minuto: consulta 60, ativação 12, edição 20, perfil público 120, geração/exportação 10. Limites de IP também se aplicam a conexões compartilhadas em eventos; ajuste no backend conforme o volume real. O Firebase Auth também protege suas próprias operações de login. App Check pode ser adicionado como camada adicional; não foi habilitado globalmente para não interferir nos módulos atuais.
-
-## Testes
+## Desenvolvimento e testes
 
 ```powershell
-npm.cmd run test:cards
-npm.cmd run test:menu
+npm.cmd run cards:api
+npm.cmd run dev
+npm.cmd run test:cards:http
 npm.cmd run test:cards:integration
-npm.cmd run test:cards:browser
-npm.cmd run build
+npm.cmd run test:production
+npm.cmd run test:menu
 ```
 
-Integração e navegador usam exclusivamente `demo-tokka-cards`, emuladores Auth/Firestore/Storage/Functions, chave temporária de teste e `https://cards.example.test` como origem fictícia de emissão. O executor restaura os arquivos locais de segredo/ambiente ao finalizar. Requer Java 21, dependências de `functions/`, navegadores Playwright e portas de teste 18080, 19099, 19199, 15001 e 5174 disponíveis. Se necessário instale Chromium com `npx.cmd playwright install chromium`. Nenhum teste usa dados de produção.
+A API local usa a configuração privada, portanto fora dos testes pode acessar produção. Os testes nunca a utilizam: exigem emuladores e o projeto `demo-tokka-cards`. O executor configura chave temporária, origem `https://cards.example.test` e restaura os arquivos locais ao terminar. O navegador exercita a API HTTP real local, com Firebase Auth e Firestore emulados, incluindo upload sem Storage. As integrações antigas de Functions/Storage continuam cobertas.
 
-Os testes verificam emissão de 300, idempotência, unicidade entre lotes, contas reais do Auth emulado, ambos os meios de ativação, QR ativo, proteção de dados públicos, reuso recusado, corrida entre contas, painel, bloqueio, permissões, unicidade de usernames, Storage, persistência, força bruta, downloads e jornada responsiva no navegador. Os testes anteriores de cardápio são mantidos.
+O modo padrão testa a API HTTP com Auth/Firestore. Para executar também a integração opcional de Functions/Storage, use `node scripts/test-cards.mjs --legacy`.
 
-O executor mant?m configura??o do CLI, caches dos emuladores e tempor?rios em `.cards-test/`, sem usar as credenciais de login do Firebase CLI do operador.
+Requisitos: Java 21, dependências de `functions/`, Chromium do Playwright e portas 18080, 19099, 19199, 15001, 15002 e 5174. `PLAYWRIGHT_CHROMIUM_EXECUTABLE` permite indicar um Chromium instalado.
 
-Refer?ncias oficiais: [fun??es callable](https://firebase.google.com/docs/functions/callable), [transa??es do Firestore](https://firebase.google.com/docs/firestore/manage-data/transactions).
-
-## Arquivos da implementa??o
-
-- `src/cards/`: rotas, cliente Firebase isolado, interface, estilos e exporta??o CSV/ZIP/SVG.
-- `src/main.jsx`: sele??o do aplicativo por `/cartoes`, mantendo o aplicativo anterior nas demais URLs.
-- `src/lib/firebaseConfig.js` e `src/lib/firebase.js`: configura??o compartilhada sem alterar os valores existentes; inicializa??o antiga preservada.
-- `functions/index.mjs`, `functions/cards-service.mjs`, `functions/package.json` e `functions/package-lock.json`: API, transa??es, criptografia, limites e depend?ncias do backend.
-- `firestore.rules` e `storage.rules`: isolamento dos dados e permiss?es das fotos.
-- `scripts/grant-cards-admin.mjs` e `scripts/test-cards.mjs`: concess?o de acesso e executor isolado dos testes.
-- `tests/cards.*`: testes de rotas, integra??o, regras e navegador.
-- `firebase.json`, `package.json`, `package-lock.json`, `.env.example`, `.gitignore` e `README.md`: configura??o adicional, comandos e documenta??o.
-
-O executor pode reutilizar Chromium j? instalado no Windows. Para outro execut?vel, defina `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. Em m?quinas lentas, a descoberta de fun??es nos testes j? usa `FUNCTIONS_DISCOVERY_TIMEOUT=120`.
-
-## Valida??o realizada
-
-Em 14/10/2026: build de produ??o aprovado; 1 teste de rotas aprovado; 7 testes anteriores de persist?ncia do card?pio aprovados; 14 verifica??es de integra??o aprovadas (13 cen?rios de backend/regras/Storage e a jornada de navegador, que cont?m 2 cen?rios Playwright aprovados). A jornada validou CSV/ZIP, cadastro, ativa??o, edi??o, recarga, logout/login, perfil p?blico pelo QR e preserva??o dos links antigos. Foram inspecionados o painel desktop e o perfil mobile. Nada foi publicado em produ??o nesta execu??o.
+O teste de produção compila o frontend e confere CSS, celular, desktop, links diretos e rotas anteriores. Cada aplicativo mantém seu próprio carregador `lazy`, necessário para o Vite carregar o CSS correto no build final.

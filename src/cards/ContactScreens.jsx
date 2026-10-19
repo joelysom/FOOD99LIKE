@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import QRCode from 'qrcode'
 import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpRight, Camera, Copy, Crop, Download, Eye, FileText, Globe, GripVertical, Mail, MapPin, Phone, PlusCircle, QrCode, Share2, Smartphone, Trash2, UserPlus, UserRound, X } from 'lucide-react'
-import { cardsApi, cardsStorage, friendlyError } from './api'
+import { cardsApi, cardsStorage, cardsUseFunctions, friendlyError } from './api'
+import { prepareCardImage } from './images'
 import { destination, copyText, linkTypes, vcard } from './contact'
 import { download } from './exports'
 import logo from './assets/tokka-contact.png'
@@ -140,6 +141,7 @@ export function ContactAccount({ user, session, refresh, run, busy }) {
   }
   async function upload(file, name, current) {
     if (!file) return current
+    if (!cardsUseFunctions) return (await cardsApi('uploadImage', { kind: name, ...await prepareCardImage(file) })).url
     const object = ref(cardsStorage, `cards/profiles/${user.uid}/${name}`)
     await uploadBytes(object, file, { contentType: file.type, cacheControl: 'public,max-age=300' })
     return getDownloadURL(object)

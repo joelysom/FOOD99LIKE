@@ -17,14 +17,15 @@ test.beforeEach(async ({ context }) => {
   await context.route('**/*', route => {
     const request = route.request()
     const url = new URL(request.url())
-    if (url.origin === 'http://127.0.0.1:5177') return route.continue()
-    if (url.pathname.endsWith('/cardsApi') && request.method() === 'POST') {
-      const { action } = request.postDataJSON().data
+    if (['/api/cards', '/cardsApi'].some(path => url.pathname.endsWith(path)) && request.method() === 'POST') {
+      const body = request.postDataJSON()
+      const { action } = body.data || body
       const data = action === 'resolve'
         ? { token, status: 'disponivel' }
         : { profileId: 'production-test', name: 'Perfil de teste', links: [] }
       return route.fulfill({ json: { data } })
     }
+    if (url.origin === 'http://127.0.0.1:5177') return route.continue()
     return route.abort()
   })
 })

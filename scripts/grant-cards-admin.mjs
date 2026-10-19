@@ -3,7 +3,7 @@ import { getAuth } from '../functions/node_modules/firebase-admin/lib/esm/auth/i
 import { getFirestore, FieldValue } from '../functions/node_modules/firebase-admin/lib/esm/firestore/index.js'
 const [userId] = process.argv.slice(2)
 if (!userId || !/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new Error('Uso: npm run firebase:grant-cards-admin -- UID_FIREBASE. Requer Application Default Credentials confiáveis.')
-const app = initializeApp({ credential: applicationDefault(), projectId: process.env.GCLOUD_PROJECT || 'tokka-eb4ae' })
+const app = initializeApp({ credential: applicationDefault(), projectId: process.env.GCLOUD_PROJECT || 'tokka-foods' })
 const user = await getAuth(app).getUser(userId)
 if (user.disabled) throw new Error('A conta está desativada.')
 const db = getFirestore(app)

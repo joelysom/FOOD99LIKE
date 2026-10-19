@@ -26,11 +26,14 @@
     "firebase:deploy:hosting": "npm run build && firebase deploy --only hosting",
     "firebase:deploy": "npm run build && firebase deploy",
     "test:cards": "node --test tests/cards.routes.test.mjs",
+    "test:cards:http": "node --test tests/cards.http.test.mjs",
+    "cards:api": "node scripts/start-cards-api.mjs",
+    "cards:prepare-backend": "node scripts/prepare-cards-backend.mjs",
     "test:cards:integration": "node scripts/test-cards.mjs",
     "test:cards:browser": "node scripts/test-cards.mjs --browser",
     "firebase:grant-cards-admin": "node scripts/grant-cards-admin.mjs",
     "firebase:import-cards": "node scripts/import-cards.mjs",
-    "firebase:deploy:cards": "firebase deploy --only functions:tokka-cards,firestore:rules,storage"
+    "firebase:deploy:cards": "firebase deploy --project cards --only functions:tokka-cards,firestore:rules,storage"
   },
   "dependencies": {
     "@tailwindcss/vite": "latest",

@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "tokka-eb4ae"
+    "default": "tokka-eb4ae",
+    "cards": "tokka-foods"
   }
 }
