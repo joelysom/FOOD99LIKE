@@ -12,6 +12,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "lint": "eslint .",
     "test:menu": "node --experimental-vm-modules --test tests/menuPersistence.test.mjs",
+    "test:production": "npm run build && playwright test --config tests/production.playwright.config.mjs",
     "firebase": "firebase",
     "firebase:login": "firebase login",
     "firebase:logout": "firebase logout",

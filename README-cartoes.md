@@ -22,6 +22,10 @@ Implementado com React/Vite, Firebase Auth, Cloud Functions (2ª geração), Fir
 
 ## Endereços
 
+Para verificar o frontend publicado, execute `npm.cmd run test:production`. Esse comando compila o projeto e abre o build final no Playwright, conferindo os estilos dos cartões em desktop e celular e os links existentes do cardápio. O teste usa respostas simuladas para cartões e bloqueia o acesso ao Firebase de produção. Se necessário, defina `PLAYWRIGHT_CHROMIUM_EXECUTABLE` com o caminho de um Chromium instalado.
+
+Os dois aplicativos usam carregadores `lazy` separados em `src/main.jsx`. Mantenha cada `import()` dentro do seu próprio carregador: com o Vite 8, um único carregador com importações condicionais deixava de carregar o CSS dos cartões no build de produção.
+
 - `/cartoes` e `/cartoes/cadastro`: QR geral do folheto, identificação por código e cadastro/login.
 - `/cartoes/c/TOKEN`: QR individual estável; cartão disponível abre ativação; ativado encaminha ao perfil; bloqueado informa indisponibilidade.
 - `/cartoes/conta`: área privada, edição de nome, username, foto, bio e site.
