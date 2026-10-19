@@ -23,20 +23,29 @@
     "firebase:deploy:storage-rules": "firebase deploy --only storage",
     "firebase:deploy:rules": "firebase deploy --only firestore:rules,storage",
     "firebase:deploy:hosting": "npm run build && firebase deploy --only hosting",
-    "firebase:deploy": "npm run build && firebase deploy"
+    "firebase:deploy": "npm run build && firebase deploy",
+    "test:cards": "node --test tests/cards.routes.test.mjs",
+    "test:cards:integration": "node scripts/test-cards.mjs",
+    "test:cards:browser": "node scripts/test-cards.mjs --browser",
+    "firebase:grant-cards-admin": "node scripts/grant-cards-admin.mjs",
+    "firebase:deploy:cards": "firebase deploy --only functions:tokka-cards,firestore:rules,storage"
   },
   "dependencies": {
     "@tailwindcss/vite": "latest",
     "@vitejs/plugin-react": "latest",
     "cropperjs": "^1.6.2",
     "firebase": "^12.17.1",
+    "jszip": "^3.10.2",
     "lucide-react": "latest",
+    "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest"
   },
   "devDependencies": {
     "@eslint/js": "latest",
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@playwright/test": "^1.64.0",
     "eslint": "latest",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",

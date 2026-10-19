@@ -118,3 +118,7 @@ Ao abrir esse link, o cardápio já entra na tela de menu com a mesa preenchida.
 - `vercel.json`: configuração de deploy e fallback SPA.
 
 Este projeto evita arquivos `.css` por componente. O único CSS mantido é o ponto de entrada necessário para o Tailwind gerar os estilos.
+
+## Cart?es individuais TOKKA
+
+O aplicativo independente de emiss?o, ativa??o e perfis fica em `/cartoes`, no mesmo dom?nio. Os links atuais do card?pio permanecem preservados. Consulte [configura??o, opera??o e testes](README-cartoes.md).

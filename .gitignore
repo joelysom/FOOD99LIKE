@@ -12,3 +12,11 @@ screenshot-*.png
 .env
 .env.*
 !.env.example
+
+functions/.secret*
+functions/.env*
+playwright-report/
+test-results/
+.cards-test/
+
+.firebase-cards-test.json

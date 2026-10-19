@@ -57,6 +57,21 @@
       "enabled": true,
       "port": 4000
     },
-    "singleProjectMode": true
-  }
+    "singleProjectMode": true,
+    "functions": {
+      "port": 5001
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "tokka-cards",
+      "ignore": [
+        "node_modules",
+        ".env*",
+        ".secret*",
+        "*debug.log"
+      ]
+    }
+  ]
 }

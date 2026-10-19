@@ -20,6 +20,16 @@ service firebase.storage {
         && firestore.exists(/databases/(default)/documents/restaurants/$(restaurantId)/admins/$(request.auth.uid));
     }
 
+    match /cards/profiles/{userId}/avatar {
+      allow read: if firestore.exists(/databases/(default)/documents/cardsProfiles/$(userId))
+        && firestore.get(/databases/(default)/documents/cardsInventory/$(firestore.get(/databases/(default)/documents/cardsProfiles/$(userId)).data.cardId)).data.status == 'ativado';
+      allow write: if isSignedIn() && request.auth.uid == userId
+        && firestore.exists(/databases/(default)/documents/cardsProfiles/$(userId))
+        && request.resource != null
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
     match /restaurants/{restaurantId}/{allPaths=**} {
       allow read: if isKnownRestaurant(restaurantId);
       allow write: if isRestaurantAdmin(restaurantId)

@@ -153,6 +153,12 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time;
     }
 
+    // Cards data is accessed exclusively through cardsApi (Admin SDK).
+    // Includes inventory, encrypted credentials, profiles, roles, indices and audit logs.
+    match /{collection}/{document} {
+      allow read, write: if false;
+    }
+
     match /restaurants/{restaurantId}/events/{eventId} {
       allow create: if isAnalyticsEvent(restaurantId);
       allow read, update, delete: if isRestaurantAdmin(restaurantId);
