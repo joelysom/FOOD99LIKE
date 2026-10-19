@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { HttpsError } from 'firebase-functions/v2/https'
+import { contactFields, contactLinks, publicContactFields, httpsUrl } from './contact-profile.mjs'
 const fail = (code, message) => { throw new HttpsError(code, message) }
 const hash = value => createHash('sha256').update(value).digest('hex')
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -158,16 +159,11 @@ export function createCardsService(db, keyProvider, originProvider) {
       const userId = uid(context)
       await limit(context, 'profile', 20)
       const { name, bio = '', photoUrl = '', website = '' } = data
+      const contact = contactFields(data)
       const username = String(data.username || '').trim().toLowerCase()
       if (typeof name !== 'string' || !name.trim() || name.trim().length > 80 || !/^[a-z0-9_]{3,30}$/.test(username) || typeof bio !== 'string' || bio.length > 600) fail('invalid-argument', 'Confira nome, usuário (3–30 letras, números ou _) e bio (até 600 caracteres).')
-      for (const url of [photoUrl, website]) {
-        if (typeof url !== 'string' || url.length > 2048) fail('invalid-argument', 'Link inválido.')
-        if (url) {
-          let parsed
-          try { parsed = new URL(url) } catch { fail('invalid-argument', 'Use links HTTPS válidos.') }
-          if (parsed.protocol !== 'https:' || parsed.username || parsed.password) fail('invalid-argument', 'Use links HTTPS válidos.')
-        }
-      }
+      httpsUrl(photoUrl)
+      httpsUrl(website)
       await db.runTransaction(async tx => {
         const ref = col('Profiles').doc(userId), current = await tx.get(ref)
         if (!current.exists) fail('failed-precondition', 'Ative seu cartão antes de editar o perfil.')
@@ -178,9 +174,26 @@ export function createCardsService(db, keyProvider, originProvider) {
         const old = current.data().username
         if (old && old !== username) tx.delete(col('Usernames').doc(old))
         tx.set(usernameRef, { uid: userId })
-        tx.update(ref, { name: name.trim(), username, bio: bio.trim(), photoUrl, website, updatedAt: stamp() })
+        tx.update(ref, { name: name.trim(), username, bio: bio.trim(), photoUrl, website, ...contact, updatedAt: stamp() })
       })
       return { profileId: userId }
+    },
+    async saveLinks(context, data) {
+      const userId = uid(context)
+      await limit(context, 'links', 40)
+      const links = contactLinks(data.links)
+      if (!Number.isSafeInteger(data.revision) || data.revision < 0) fail('invalid-argument', 'Revisão dos links inválida.')
+      return db.runTransaction(async tx => {
+        const ref = col('Profiles').doc(userId)
+        const profile = await tx.get(ref)
+        if (!profile.exists) fail('failed-precondition', 'Ative seu cartão antes de editar os links.')
+        const card = await tx.get(col('Inventory').doc(profile.data().cardId))
+        if (card.data()?.ownerId !== userId) fail('permission-denied', 'Este perfil não pertence à sua conta.')
+        const revision = profile.data().linksRevision || 0
+        if (revision !== data.revision) fail('aborted', 'Os links foram atualizados em outra aba. Recarregue antes de editar novamente.')
+        tx.update(ref, { links, linksRevision: revision + 1, updatedAt: stamp() })
+        return { links, revision: revision + 1 }
+      })
     },
     async publicProfile(context, data) {
       await limit(context, 'public', 120)
@@ -191,7 +204,7 @@ export function createCardsService(db, keyProvider, originProvider) {
         const card = await tx.get(col('Inventory').doc(profile.data().cardId))
         if (card.data()?.status !== 'ativado') fail('not-found', 'Este perfil está indisponível.')
         const { name, username, bio, photoUrl, website } = profile.data()
-        return { profileId: profile.id, name, username, bio, photoUrl, website }
+        return { profileId: profile.id, name, username, bio, photoUrl, website, ...publicContactFields(profile.data()) }
       })
     },
     async dashboard(context, data) {

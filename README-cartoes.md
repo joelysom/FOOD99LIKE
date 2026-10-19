@@ -1,5 +1,23 @@
 # TOKKA Cartões — aplicativo independente no domínio atual
 
+## Interface TOKKA Contact
+
+O frontend foi adaptado do repositório [eusettee/tokka-contact](https://github.com/eusettee/tokka-contact), revisão `1cf7f03b94b384d50dd06783b51de5199cb1c917`, em 19/10/2026. Foram preservados a logo original, a estampa de ondas, as fontes Google Sans locais e os ícones. O tema escuro fica restrito ao aplicativo `/cartoes`.
+
+- `/cartoes/conta`: editor com duas colunas a partir de 768 px e largura máxima de 1120 px, foto com ajuste de enquadramento, cargo, empresa, bio, telefone, e-mail público opcional, localização e logo da empresa. Foto e logo aceitam JPG, PNG ou WebP de até 2 MB, conforme as regras do Firebase.
+- Links: até 20 ações de WhatsApp, LinkedIn, Instagram, Meet/agenda, Pix, site, e-mail, telefone ou PDF externo por HTTPS. Inclusão, edição, exclusão, filtros, ativação e reordenação por alça/setas. Alterações são salvas no servidor imediatamente; conflitos entre abas não sobrescrevem os links silenciosamente.
+- `/cartoes/p/UID`: perfil público com largura máxima de 440 px, cartão azul com ondas, salvar contato em vCard, ligar, logo e links ativos. Pix apenas copia a chave configurada. O e-mail público é preenchido explicitamente; o e-mail de login nunca é copiado para ele.
+- `/cartoes/simulacao`: prévia do perfil publicado em uma moldura de celular.
+- Compartilhamento: Web Share quando disponível, copiar endereço, visualizar QR e baixar SVG do mesmo QR individual estável.
+
+Os campos adicionais são opcionais e compatíveis com perfis anteriores. `saveProfile` aceita os campos públicos validados; a operação autenticada `saveLinks` usa revisão numérica (`linksRevision`) e transação. O público recebe apenas links ativos. O Storage aceita somente `avatar` e `company-logo` nos caminhos de imagens do proprietário. Nenhum dado precisa ser migrado.
+
+Após atualizar o frontend, publique também Functions e regras de Storage com `npm.cmd run firebase:deploy:cards`, pois os novos campos e links dependem do backend atualizado. As configurações de domínio, Hosting, Vercel, links de restaurante e emissão permanecem as existentes. Os contadores e a caixa de contatos do protótipo local não foram importados como dados fictícios.
+
+Arquivos principais desta adaptação: `src/cards/ContactScreens.jsx`, `src/cards/contact.js`, `src/cards/cards.css`, `src/cards/assets/`, `functions/contact-profile.mjs`, `functions/cards-service.mjs`, `functions/index.mjs`, `storage.rules` e testes `tests/cards.*`.
+
+Validação em 19/10/2026: build aprovado, rotas aprovadas, sete testes anteriores do cardápio aprovados e 15 verificações de integração aprovadas, incluindo dois cenários Playwright. O fluxo de navegador valida upload de foto/logo, links com persistência e ordem, ocultação de links desativados, QR, simulação, vCard, Pix, privacidade e links antigos. Nenhuma publicação foi feita nesta adaptação.
+
 Implementado com React/Vite, Firebase Auth, Cloud Functions (2ª geração), Firestore e Storage existentes. As rotas por hash, URLs NFC de mesas, `/c/8Ks29`, configurações de restaurante, `vercel.json` e rewrites de Hosting permanecem preservados. O novo módulo é carregado apenas em `/cartoes` e usa uma sessão Firebase nomeada, independente do login do restaurante.
 
 ## Endereços

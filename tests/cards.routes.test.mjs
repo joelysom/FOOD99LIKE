@@ -6,6 +6,7 @@ test('novas rotas ficam restritas a /cartoes', () => {
   assert.equal(getCardsRoute('/cartoes/cadastro').page, 'activate')
   assert.equal(getCardsRoute('/cartoes/conta').page, 'account')
   assert.equal(getCardsRoute('/cartoes/admin').page, 'admin')
+  assert.equal(getCardsRoute('/cartoes/simulacao').page, 'simulation')
   const token = 'a'.repeat(48)
   assert.deepEqual(getCardsRoute(`/cartoes/c/${token}`), { page: 'activate', token })
   assert.deepEqual(getCardsRoute('/cartoes/p/user_123'), { page: 'public', profileId: 'user_123' })

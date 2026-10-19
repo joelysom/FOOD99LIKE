@@ -74,7 +74,7 @@ test('D: QR ativo resolve para perfil sem revelar dados privados', async () => {
   assert.equal(found.profileId, alice.uid)
   const publicProfile = await call('publicProfile', { profileId: found.profileId })
   assert.equal(publicProfile.name, 'Alice')
-  assert.deepEqual(Object.keys(publicProfile).sort(), ['profileId', 'name', 'username', 'bio', 'photoUrl', 'website'].sort())
+  assert.deepEqual(Object.keys(publicProfile).sort(), ['profileId', 'name', 'username', 'bio', 'photoUrl', 'website', 'role', 'company', 'location', 'phone', 'contactEmail', 'companyLogoUrl', 'photoX', 'photoY', 'photoZoom', 'links'].sort())
   assert.equal((await call('session', {}, bob)).profile.name, '')
 })
 test('E: segunda conta não pode tomar posse; uma conta não pode ter dois cartões', async () => {
@@ -114,6 +114,32 @@ test('I: login posterior preserva vínculo; atualização de perfil exige dono e
   assert.equal((await call('session', {}, alice)).profile.name, 'Alice')
   await reject(call('saveProfile', { name: 'Bad', username: 'valid', website: 'javascript:alert(1)' }, bob), 'INVALID_ARGUMENT')
 })
+test('Contact: campos e links reais, privacidade, revisão e validação no servidor', async () => {
+  await call('saveProfile', { name: 'Bob', username: 'bob_tokka', role: 'Diretor', company: 'Empresa', phone: '+5581999999999', contactEmail: 'publico@example.com', location: 'Recife', companyLogoUrl: 'https://example.com/logo.png', photoX: 30, photoY: 60, photoZoom: 1.5 }, bob)
+  const links = [
+    { id: 'whatsapp', type: 'whatsapp', title: 'WhatsApp', value: '+5581999999999', enabled: true },
+    { id: 'pix', type: 'pix', title: 'Minha chave', value: 'pix@example.com', enabled: true },
+    { id: 'private-link', type: 'url', title: 'Oculto', value: 'https://example.com/private', enabled: false },
+  ]
+  const result = await call('saveLinks', { links, revision: 0, profileId: alice.uid }, bob)
+  assert.equal(result.revision, 1)
+  const published = await call('publicProfile', { profileId: bob.uid })
+  assert.equal(published.role, 'Diretor')
+  assert.equal(published.contactEmail, 'publico@example.com')
+  assert.equal(published.email, undefined)
+  assert.equal(published.photoZoom, 1.5)
+  assert.deepEqual(published.links.map(link => link.id), ['whatsapp', 'pix'])
+  assert.equal((await call('session', {}, alice)).profile.links, undefined)
+  await reject(call('saveLinks', { links: [], revision: 0 }, bob), 'ABORTED')
+  await reject(call('saveLinks', { links: [{ ...links[0], type: 'url', value: 'javascript:alert(1)' }], revision: 1 }, bob), 'INVALID_ARGUMENT')
+  await reject(call('saveLinks', { links: [links[0], links[0]], revision: 1 }, bob), 'INVALID_ARGUMENT')
+  await reject(call('saveLinks', { links: Array.from({ length: 21 }, (_, i) => ({ ...links[0], id: `link-${i}` })), revision: 1 }, bob), 'INVALID_ARGUMENT')
+  await reject(call('saveLinks', { links: [], revision: 0 }, carol), 'FAILED_PRECONDITION')
+  await reject(call('saveProfile', { name: 'Bob', username: 'bob_tokka', contactEmail: 'bad email', photoZoom: 50 }, bob), 'INVALID_ARGUMENT')
+  await call('saveLinks', { links: [links[1], links[0]], revision: 1 }, bob)
+  assert.deepEqual((await call('publicProfile', { profileId: bob.uid })).links.map(link => link.id), ['pix', 'whatsapp'])
+})
+
 test('regras negam dados privados e escrita direta, inclusive ao admin', async () => {
   for (const context of [rules.unauthenticatedContext(), rules.authenticatedContext(alice.uid), rules.authenticatedContext(admin.uid)]) {
     const firestore = context.firestore()
@@ -127,6 +153,8 @@ test('Storage: apenas dono envia foto válida; público não lê foto de cartão
   const ownStorage = rules.authenticatedContext(bob.uid).storage()
   const jpeg = new Uint8Array([255, 216, 255, 217])
   await uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/avatar`), jpeg, { contentType: 'image/jpeg' })
+  await uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/company-logo`), jpeg, { contentType: 'image/jpeg' })
+  await assertFails(uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/arbitrary-file`), jpeg, { contentType: 'image/jpeg' }))
   await assertFails(uploadBytes(ref(ownStorage, `cards/profiles/${alice.uid}/avatar`), jpeg, { contentType: 'image/jpeg' }))
   await assertFails(uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/avatar`), jpeg, { contentType: 'image/svg+xml' }))
   await assertFails(uploadBytes(ref(ownStorage, `cards/profiles/${bob.uid}/avatar`), new Uint8Array(2 * 1024 * 1024 + 1), { contentType: 'image/jpeg' }))

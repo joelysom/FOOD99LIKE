@@ -1,24 +1,15 @@
 import { useEffect, useState } from 'react'
 import { createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import QRCode from 'qrcode'
-import { ArrowRight, Check, CreditCard, Download, LogOut, QrCode, ShieldCheck, UserRound } from 'lucide-react'
-import { cardsApi, cardsAuth, cardsStorage, friendlyError } from './api'
+import { ArrowRight, Check, CreditCard, Download, LogOut, QrCode, ShieldCheck } from 'lucide-react'
+import { cardsApi, cardsAuth, friendlyError } from './api'
 import { downloadLeaflet, exportCsv, exportPrintKit } from './exports'
 import { getCardsRoute } from './routes'
+import { ContactAccount, ContactPublic, ContactSimulation } from './ContactScreens'
+import contactLogo from './assets/tokka-contact.png'
 import './cards.css'
 
 const route = getCardsRoute(window.location.pathname)
 const date = value => value ? new Date(value).toLocaleString('pt-BR') : '—'
-function QR({ value }) {
-  const [image, setImage] = useState('')
-  useEffect(() => {
-    let alive = true
-    QRCode.toDataURL(value, { margin: 4, errorCorrectionLevel: 'M', width: 240 }).then(url => { if (alive) setImage(url) }).catch(() => {})
-    return () => { alive = false }
-  }, [value])
-  return image ? <img className="tc-qr" src={image} alt="QR Code do seu perfil público" /> : <span>Preparando QR Code…</span>
-}
 function Field({ label, ...props }) { return <label className="tc-field"><span>{label}</span><input {...props} /></label> }
 function Notice({ children, success = false }) { return <div className={`tc-notice ${success ? 'tc-success' : ''}`} role={success ? 'status' : 'alert'}>{children}</div> }
 function AuthForm({ run, busy, admin = false }) {
@@ -67,47 +58,6 @@ function Activation({ user, session, run, busy }) {
     </section>
     {card?.status === 'disponivel' && (!user ? <AuthForm run={run} busy={busy} /> : <section className="tc-panel"><div className="tc-eyebrow">03 / ATIVAÇÃO</div><h2>Pronto para ser seu.</h2><p>Você está conectado como <strong>{user.email}</strong>. Ao ativar, este cartão será vinculado à sua conta.</p>{session?.profile && session.profile.cardId !== card.token ? <Notice>Sua conta já possui um cartão. <a href="/cartoes/conta">Acessar meu perfil</a></Notice> : <button className="tc-primary" disabled={busy} onClick={() => run(async () => { await cardsApi('activate', { token: card.token }); sessionStorage.removeItem('tokka-selected-card'); setSuccess(true) })}>{busy ? 'Ativando…' : 'Ativar meu cartão'}<Check size={18} /></button>}</section>)}
   </>
-}
-function Account({ user, session, refresh, run, busy }) {
-  const profile = session?.profile
-  const [form, setForm] = useState({ name: profile?.name || '', username: profile?.username || '', bio: profile?.bio || '', photoUrl: profile?.photoUrl || '', website: profile?.website || '' })
-  const [saved, setSaved] = useState(false)
-  const [file, setFile] = useState(null)
-  if (!profile) return <section className="tc-panel"><h2>Seu cartão está esperando.</h2><p>Ative um cartão TOKKA para criar seu perfil.</p><a className="tc-primary" href="/cartoes/cadastro">Ativar cartão <ArrowRight size={18} /></a></section>
-  const url = `${window.location.origin}/cartoes/p/${user.uid}`
-  const change = name => e => { setSaved(false); setForm({ ...form, [name]: e.target.value }) }
-  return <div className="tc-account-grid"><section className="tc-panel"><div className="tc-eyebrow">SEU ESPAÇO</div><h2>Apresente-se ao mundo.</h2><p>As informações abaixo ficam públicas. Seu e-mail permanece privado.</p>
-    <form onSubmit={e => { e.preventDefault(); run(async () => {
-      let photoUrl = form.photoUrl
-      if (file) {
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) throw new Error('Escolha uma foto JPG, PNG ou WebP de até 2 MB.')
-        const object = ref(cardsStorage, `cards/profiles/${user.uid}/avatar`)
-        await uploadBytes(object, file, { contentType: file.type, cacheControl: 'public,max-age=300' })
-        photoUrl = await getDownloadURL(object)
-      }
-      await cardsApi('saveProfile', { ...form, photoUrl }); setForm({ ...form, photoUrl }); setFile(null); await refresh(); setSaved(true)
-    }) }}>
-      <Field label="Nome público" required maxLength={80} value={form.name} onChange={change('name')} autoComplete="name" />
-      <Field label="Nome de usuário exclusivo" required minLength={3} maxLength={30} pattern="[a-z0-9_]{3,30}" placeholder="seu_nome" value={form.username} onChange={change('username')} />
-      <label className="tc-field"><span>Biografia</span><textarea maxLength={600} rows={4} placeholder="Conte um pouco sobre você…" value={form.bio} onChange={change('bio')} /></label>
-      <Field label="Site ou rede social (HTTPS)" type="url" maxLength={2048} placeholder="https://" value={form.website} onChange={change('website')} />
-      <Field label="Foto de perfil (JPG, PNG ou WebP, até 2 MB)" type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { setFile(e.target.files[0] || null); setSaved(false) }} />
-      <Field label="Ou use um link HTTPS para a foto" type="url" maxLength={2048} value={form.photoUrl} onChange={change('photoUrl')} />
-      <button className="tc-primary" disabled={busy}>{busy ? 'Salvando…' : 'Salvar perfil'}<Check size={18} /></button>
-    </form>{saved && <Notice success>Seu perfil foi salvo.</Notice>}
-  </section><aside className="tc-panel tc-centered"><CreditCard size={32} /><h2>Seu cartão, sempre atual.</h2><p>Você pode atualizar seu perfil sem trocar o QR impresso.</p><QR value={`${window.location.origin}/cartoes/c/${profile.cardId}`} /><a className="tc-text tc-break" href={url}>{url}</a><a className="tc-secondary" href={url}>Ver meu perfil público <ArrowRight size={16} /></a></aside></div>
-}
-function PublicProfile() {
-  const [state, setState] = useState({ loading: true })
-  useEffect(() => {
-    let alive = true
-    cardsApi('publicProfile', { profileId: route.profileId }).then(profile => { if (alive) setState({ profile }) }).catch(error => { if (alive) setState({ error: friendlyError(error) }) })
-    return () => { alive = false }
-  }, [])
-  if (state.loading) return <section className="tc-panel" role="status">Abrindo perfil…</section>
-  if (state.error) return <section className="tc-panel"><Notice>{state.error}</Notice><button className="tc-secondary" onClick={() => window.location.reload()}>Tentar novamente</button></section>
-  const p = state.profile
-  return <section className="tc-public"><div className="tc-profile-cover" /><div className="tc-profile-body">{p.photoUrl ? <img className="tc-avatar" src={p.photoUrl} alt={`Foto de ${p.name || 'perfil'}`} referrerPolicy="no-referrer" onError={e => { e.currentTarget.style.display = 'none' }} /> : <div className="tc-avatar tc-avatar-fallback"><UserRound size={42} /></div>}<div className="tc-eyebrow">CONEXÕES QUE FICAM</div><h1>{p.name || 'Uma nova conexão TOKKA'}</h1>{p.username && <p className="tc-handle">@{p.username}</p>}<p className="tc-bio">{p.bio || 'Este perfil está sendo preparado. Volte em breve.'}</p>{p.website && <a className="tc-primary" href={p.website} target="_blank" rel="noopener noreferrer">Vamos nos conectar <ArrowRight size={18} /></a>}<div className="tc-profile-footer">Compartilhado com TOKKA.</div></div></section>
 }
 function Admin({ run, busy }) {
   const [data, setData] = useState(null)
@@ -174,9 +124,16 @@ export default function CardsApp() {
     return () => { version++; unsubscribe() }
   }, [])
   const publicPage = route.page === 'public'
-  return <div className="tc-app"><header className="tc-header"><a className="tc-logo" href="/cartoes">TOKKA<span>CARTÕES & CONEXÕES</span></a><nav aria-label="Cartões TOKKA">{!publicPage && <><a href="/cartoes/cadastro">Ativar cartão</a><a href="/cartoes/conta">Meu perfil</a>{session?.isAdmin && <a href="/cartoes/admin">Painel</a>}{user && <button aria-label="Sair" className="tc-text" disabled={busy} onClick={() => run(() => signOut(cardsAuth))}><LogOut size={16} /><span>Sair</span></button>}</>}</nav></header>
+  return <div className={`tc-app ${publicPage ? 'ct-public-page' : route.page === 'account' && session?.profile ? 'ct-editor-page' : route.page === 'simulation' ? 'ct-simulation-page' : ''}`}><header className="tc-header">
+    {publicPage ? <div className="tc-logo"><img src={contactLogo} alt="TOKKA Contact" width="2172" height="724" /></div> : <a className="tc-logo" href={session?.profile ? '/cartoes/conta' : '/cartoes'} aria-label="TOKKA Contact"><img src={contactLogo} alt="TOKKA Contact" width="2172" height="724" /></a>}
+    {!publicPage && <nav aria-label="Cartões TOKKA">
+      {session?.profile ? <><a href="/cartoes/conta" aria-current={route.page === 'account' ? 'page' : undefined}>Visão Geral</a><a href={`/cartoes/p/${user.uid}`}>Ver Perfil</a></> : <><a href="/cartoes/cadastro" aria-current={route.page === 'activate' ? 'page' : undefined}>Ativar cartão</a><a href="/cartoes/conta" aria-current={route.page === 'account' ? 'page' : undefined}>Meu perfil</a></>}
+      {session?.isAdmin && <a href="/cartoes/admin" aria-current={route.page === 'admin' ? 'page' : undefined}>Painel</a>}
+      {user && <button aria-label="Sair" className="tc-text" disabled={busy} onClick={() => run(() => signOut(cardsAuth))}><LogOut size={16} /><span>Sair</span></button>}
+    </nav>}
+  </header>
     <main className={`tc-main ${route.page === 'admin' ? 'tc-wide' : ''}`}>
       {error && <Notice>{error}<button className="tc-text" onClick={() => setError('')}>Fechar aviso</button></Notice>}
-      {publicPage ? <PublicProfile /> : loading ? <section className="tc-panel" role="status">Preparando seu espaço…</section> : route.page === 'activate' ? <div className="tc-onboarding"><div className="tc-intro"><div className="tc-eyebrow">SEU CARTÃO. SUA HISTÓRIA.</div><h1>O encontro passa.<br /><em>A conexão fica.</em></h1><p>Transforme um primeiro contato em uma conexão que acompanha você.</p><div className="tc-card-art" aria-hidden="true"><strong>TOKKA</strong><QrCode size={64} /><span>FEITO PARA CONECTAR.</span></div><ol className="tc-journey">{['Receba sua caixa', 'Abra a embalagem', 'Escaneie o QR', 'Identifique seu cartão', 'Crie ou acesse sua conta', 'Ative e complete seu perfil'].map((step, i) => <li key={step}><span>{String(i + 1).padStart(2, '0')}</span>{step}</li>)}</ol></div><div className="tc-flow"><Activation user={user} session={session} run={run} busy={busy} /></div></div> : route.page === 'account' ? !user ? <AuthForm run={run} busy={busy} /> : session ? <Account key={user.uid} user={user} session={session} refresh={refresh} run={run} busy={busy} /> : <section className="tc-panel"><Notice>Não foi possível carregar sua conta.</Notice><button className="tc-secondary" onClick={() => run(refresh)}>Tentar novamente</button></section> : route.page === 'admin' ? !user ? <AuthForm run={run} busy={busy} admin /> : session?.isAdmin ? <Admin run={run} busy={busy} /> : <section className="tc-panel"><ShieldCheck size={28} /><h2>Acesso restrito.</h2><p>Esta conta não tem permissão para administrar cartões. Entre com uma conta autorizada pela equipe TOKKA.</p><button className="tc-secondary" onClick={() => run(() => signOut(cardsAuth))}>Trocar conta</button></section> : <section className="tc-panel"><h1>Página não encontrada.</h1><a href="/cartoes">Ir para cartões TOKKA</a></section>}
-    </main><footer className="tc-footer"><span>TOKKA © {new Date().getFullYear()}</span><span>Pessoas. Histórias. Conexões.</span></footer></div>
+      {publicPage ? <ContactPublic profileId={route.profileId} run={run} /> : loading ? <section className="tc-panel" role="status">Preparando seu espaço…</section> : route.page === 'activate' ? <div className="tc-onboarding"><div className="tc-intro"><div className="tc-eyebrow">SEU CARTÃO. SUA HISTÓRIA.</div><h1>O encontro passa.<br /><em>A conexão fica.</em></h1><p>Transforme um primeiro contato em uma conexão que acompanha você.</p><div className="tc-card-art" aria-hidden="true"><strong>TOKKA</strong><QrCode size={64} /><span>FEITO PARA CONECTAR.</span></div><ol className="tc-journey">{['Receba sua caixa', 'Abra a embalagem', 'Escaneie o QR', 'Identifique seu cartão', 'Crie ou acesse sua conta', 'Ative e complete seu perfil'].map((step, i) => <li key={step}><span>{String(i + 1).padStart(2, '0')}</span>{step}</li>)}</ol></div><div className="tc-flow"><Activation user={user} session={session} run={run} busy={busy} /></div></div> : route.page === 'account' ? !user ? <AuthForm run={run} busy={busy} /> : session ? <ContactAccount key={user.uid} user={user} session={session} refresh={refresh} run={run} busy={busy} /> : <section className="tc-panel"><Notice>Não foi possível carregar sua conta.</Notice><button className="tc-secondary" onClick={() => run(refresh)}>Tentar novamente</button></section> : route.page === 'simulation' ? !user ? <AuthForm run={run} busy={busy} /> : session ? <ContactSimulation user={user} session={session} /> : <section className="tc-panel"><p>Não foi possível carregar sua conta.</p><button className="tc-secondary" onClick={() => run(refresh)}>Tentar novamente</button></section> : route.page === 'admin' ? !user ? <AuthForm run={run} busy={busy} admin /> : session?.isAdmin ? <Admin run={run} busy={busy} /> : <section className="tc-panel"><ShieldCheck size={28} /><h2>Acesso restrito.</h2><p>Esta conta não tem permissão para administrar cartões. Entre com uma conta autorizada pela equipe TOKKA.</p><button className="tc-secondary" onClick={() => run(() => signOut(cardsAuth))}>Trocar conta</button></section> : <section className="tc-panel"><h1>Página não encontrada.</h1><a href="/cartoes">Ir para cartões TOKKA</a></section>}
+    </main>{!publicPage && <footer className="tc-footer"><span>TOKKA © {new Date().getFullYear()}</span><span>Pessoas. Histórias. Conexões.</span></footer>}</div>
 }

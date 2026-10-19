@@ -20,10 +20,12 @@ service firebase.storage {
         && firestore.exists(/databases/(default)/documents/restaurants/$(restaurantId)/admins/$(request.auth.uid));
     }
 
-    match /cards/profiles/{userId}/avatar {
-      allow read: if firestore.exists(/databases/(default)/documents/cardsProfiles/$(userId))
+    match /cards/profiles/{userId}/{imageId} {
+      allow read: if imageId in ['avatar', 'company-logo']
+        && firestore.exists(/databases/(default)/documents/cardsProfiles/$(userId))
         && firestore.get(/databases/(default)/documents/cardsInventory/$(firestore.get(/databases/(default)/documents/cardsProfiles/$(userId)).data.cardId)).data.status == 'ativado';
-      allow write: if isSignedIn() && request.auth.uid == userId
+      allow write: if imageId in ['avatar', 'company-logo']
+        && isSignedIn() && request.auth.uid == userId
         && firestore.exists(/databases/(default)/documents/cardsProfiles/$(userId))
         && request.resource != null
         && request.resource.size <= 2 * 1024 * 1024

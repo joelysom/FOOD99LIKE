@@ -9,7 +9,7 @@ const publicOrigin = defineString('CARDS_PUBLIC_ORIGIN', { description: 'Origem 
 const service = createCardsService(getFirestore(), () => exportKey.value(), () => publicOrigin.value())
 export const cardsApi = onCall({ region: 'southamerica-east1', secrets: [exportKey], timeoutSeconds: 120, memory: '256MiB', maxInstances: 10 }, async request => {
   request.rawRequest.res?.setHeader('Cache-Control', 'no-store')
-  const allowed = ['session', 'generate', 'resolve', 'activate', 'saveProfile', 'publicProfile', 'dashboard', 'exportBatch', 'block']
+  const allowed = ['session', 'generate', 'resolve', 'activate', 'saveProfile', 'saveLinks', 'publicProfile', 'dashboard', 'exportBatch', 'block']
   const action = request.data?.action
   if (!allowed.includes(action)) throw new HttpsError('invalid-argument', 'Operação desconhecida.')
   try { return await service[action](request, request.data?.payload || {}) }
